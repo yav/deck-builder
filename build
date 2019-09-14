@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+  CMD=build
+else
+  CMD=$1
+fi
+
+case $CMD in
+  build)
+    cabal v2-build
+  ;;
+  docs)
+    cabal v2-haddock \
+        --enable-documentation \
+        --haddock-hyperlink-source
+  ;;
+  *)
+    echo "Unknown command: $CMD"
+esac
+

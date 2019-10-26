@@ -12,9 +12,7 @@ handleMessage Attribute { .. } msg@Message { .. } =
 
     Strength
       | source, Attack x <- msgPayload ->
-        response [ SetAttr attrValue
-                 , Continue msg { msgPayload = Attack (x + attrValue) }
-                 ]
+        respondRemain [ continue (Attack (x + attrValue)) ]
 
     Buffer
       | target, Damage x <- msgPayload, x > 0 ->
@@ -23,16 +21,15 @@ handleMessage Attribute { .. } msg@Message { .. } =
 
     Thorns
       | target, Attack _ <- msgPayload ->
-        response [ SetAttr attrValue
-                 , Continue msg
-                 , NewMessage Message { msgReceiver = msgSender
-                                      , msgSender   = msgReceiver
-                                      , msgPayload  = Damage attrValue
-                                      }
-                 ]
+        respondRemain [ Continue msg, sendBack (Damage attrValue) ]
 
     HP
-      | target, Damage x <- msgPayload ->
+      | target
+      , let isDmg = case msgPayload of
+                      Damage a -> Just a
+                      GainAttribute HP n | n < 0 -> Just (negate n)
+                      _ -> Nothing
+      , Just x <- isDmg ->
         if x >= attrValue
           then response [ NewMessage
                           Message { msgReceiver = msgReceiver
@@ -41,20 +38,49 @@ handleMessage Attribute { .. } msg@Message { .. } =
                                   } ]
           else response [ SetAttr (attrValue - x) ]
 
+    Block
+      | target, Damage x <- msgPayload ->
+        case compare x attrValue of
+          LT -> response [ SetAttr (attrValue - x) ]
+          EQ -> response []
+          GT -> response [ Continue
+                           Message { msgPayload = Damage (x - attrValue), .. } ]
+
+    Card nm InDiscard
+      | ShuffleDiscard <- msgPayload ->
+        response [ Continue msg
+                 , NewMessage
+                   Message { msgReceiver = attrOwner
+                           , msgPayload = GainAttribute
+                                            (Card nm InDraw) attrValue
+                           , ..
+                           }
+                 ]
+
     Card Strike cl
       | target, ActivateCard tgt <- msgPayload ->
         response [ NewMessage
                    Message { msgReceiver = tgt
-                           , msgSender = attrOwner
+                           , msgSender = msgSender
                            , msgPayload = Attack attrValue
                            }
-                 , NewMessage
-                   Message { msgReceiver = msgReceiver
-                           , msgSender = msgSender
-                           , msgPayload = GainAttribute
-                                (Card Strike InDiscard) attrValue
-                           }
-                ]
+                 , sendAlso (Discard Strike cl attrValue)
+                 ]
+
+    Approved
+      | Attack n <- msgPayload ->
+        approved [ sendAlso (Damage n) ]
+
+      | Discard nm loc val <- msgPayload ->
+        approved
+          [ sendBack (GainAttribute (Count loc) (-1))
+          , sendAlso (GainAttribute (Card nm InDiscard) val)
+          ]
+
+      | GainAttribute (Card _ loc) _ <- msgPayload ->
+        approved
+          [ Continue msg, sendBack (GainAttribute (Count loc) 1) ]
+
 
     _ | target
       , GainAttribute a n <- msgPayload
@@ -63,19 +89,41 @@ handleMessage Attribute { .. } msg@Message { .. } =
     _ | target, Died <- msgPayload ->
         response [ Continue msg ]
 
+
     _ -> notForMe attrValue msg
 
   where
   target = msgReceiver == attrOwner
   source = msgSender   == attrOwner
+  respondRemain xs = response (SetAttr attrValue : xs)
+  sendAlso p = NewMessage
+               Message { msgPayload = p, .. }
 
-sink :: Message -> [SinkResponse]
-sink msg@Message { .. } =
+  sendBack p = NewMessage
+               Message { msgReceiver = msgSender
+                       , msgSender   = msgReceiver
+                       , msgPayload  = p
+                       }
+  continue p = Continue Message { msgPayload = p, .. }
+
+  approved xs = respondRemain (Continue msg : xs)
+
+
+
+sink :: Message -> [Attribute]
+sink Message { .. } =
   case msgPayload of
-    Attack n -> [ AddMessage msg { msgPayload = Damage n } ]
+
+    ShuffleDiscard ->
+      [ Attribute { attrOwner = msgSender
+                  , attrName = Count InDiscard
+                  , attrValue = 0
+                  }
+      ]
+
     GainAttribute attrName attrValue ->
-                [ NewAttribute Attribute { attrOwner = msgReceiver, .. } ]
+      [ Attribute { attrOwner = msgReceiver, .. } ]
+
+
     _ -> []
-
-
 

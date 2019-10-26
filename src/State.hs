@@ -3,13 +3,14 @@ module State where
 
 import Data.Map(Map)
 import qualified Data.Map as Map
-import Data.Maybe(fromJust)
+import Data.List(unfoldr)
 
 import GameTypes
 import StateTypes
 import Game
 
 
+--------------------------------------------------------------------------------
 
 showShortAttr :: Attribute -> String
 showShortAttr Attribute { .. } =
@@ -19,13 +20,44 @@ showShortMessage :: Message -> String
 showShortMessage Message { .. } =
   show msgSender ++ "->" ++ show msgReceiver ++ ":" ++ show msgPayload
 
+showState :: State -> String
+showState State { .. } =
+  unlines (
+    [ replicate 80 '='
+    , showAttributes stateAttributes
+    , "~~~ Status:"
+    , showStaus stateStatus
+    , "~~~ Messages:"
+    ] ++ map showShortMessage (qToList stateMessages)
+    ++
+    [ replicate 80 '=' ]
+  )
+
+showFrame :: Frame -> String
+showFrame f =
+  case f of
+    WorkDone m -> unwords [ "[Finished]", showShortMessage m ]
+    WorkTodo m -> unwords [ "[Todo]", showShortMessage m ]
+    WorkProgress WorkState { .. } ->
+      unlines $
+        unwords [ "[Working]", showShortMessage workMessage ]
+      : [ "  " ++ showShortAttr a | a <- workTodo ] ++
+        (case qToList workMore of
+           [] -> []
+           ms -> [ "  *** Msgs" ] ++
+                 [ "  " ++ showShortMessage m | m <- ms ])
+
+
+showStaus :: [Frame] -> String
+showStaus = unlines . map showFrame
+
 
 
 
 --------------------------------------------------------------------------------
 
 data State = State { stateAttributes :: Attributes
-                   , stateStatus     :: Status
+                   , stateStatus     :: [Frame]
                    , stateMessages   :: Q Message
                    }
 
@@ -33,6 +65,11 @@ data State = State { stateAttributes :: Attributes
 instance Show State where
   show = showState
 
+initState :: State
+initState = State { stateAttributes = noAttributes
+                  , stateMessages = emptyQ
+                  , stateStatus = []
+                  }
 
 sendMessage :: CharId -> CharId -> Event -> State -> State
 sendMessage msgSender msgReceiver msgPayload = sendMessages [ Message { .. } ]
@@ -44,49 +81,72 @@ sendMessages msgs State { .. } =
 stepState :: State -> Maybe State
 stepState State { .. } =
   case stateStatus of
-    Idle ->
-      do (workMessage,newQ) <- deQ stateMessages
-         pure State { stateStatus =
-                        MessageWorking
-                        WorkState { workTodo = attributesToList stateAttributes
-                                  , ..
-                                  }
+    [] ->
+      do (newMsg,newQ) <- deQ stateMessages
+         pure State { stateStatus = [WorkTodo newMsg]
                     , stateMessages = newQ
                     , ..
                     }
 
-    MessageDone m ->
-      let rs = sink m
-      in pure State { stateStatus   = Idle
-                    , stateMessages = enQs [ msg | AddMessage msg <- rs ]
-                                           stateMessages
-                    , stateAttributes =
-                        foldr setAttrA stateAttributes
-                                        [ a | NewAttribute a <- rs ]
-                    }
+    f : moreFrames -> pure
 
-    MessageWorking WorkState { .. } -> pure
-      case workTodo of
-        [] -> State { stateStatus = MessageDone workMessage, .. }
-        a@Attribute { .. } : todo ->
-          State
-            { stateAttributes =
-                case rspNewVal of
-                  Nothing -> deleteAttribute attrOwner attrName stateAttributes
-                  Just v  -> setAttr attrOwner attrName v stateAttributes
+      case f of
+        WorkDone m ->
+          State { stateStatus     = moreFrames
+                , stateAttributes = foldr setAttrA stateAttributes (sink m)
+                , ..
+                }
 
-            , stateMessages = enQs rspNewMessages stateMessages
+        WorkTodo m ->
+          State { stateStatus =
+                    WorkProgress
+                    WorkState { workMessage = m
+                              , workTodo = attributesToList stateAttributes
+                              , workMore = emptyQ
+                              } : moreFrames
+                , ..
+                }
 
-            , stateStatus =
-                case rspPassItOn of
-                  Nothing -> Idle
-                  Just m1 -> MessageWorking
-                               WorkState { workMessage = m1
-                                         , workTodo    = todo
-                                         }
-            }
-          where MessageResponse { .. } = handleMessage a workMessage
+        WorkProgress WorkState { .. } ->
+          case workTodo of
 
+            [] -> State { stateStatus   = WorkDone workMessage
+                                        : map WorkTodo (qToList workMore)
+                                       ++ moreFrames
+                        , ..
+                        }
+
+            a@Attribute { .. } : moreTodo ->
+              case handleMessage a workMessage of
+                MessageResponse { .. } ->
+                  State
+                    { stateAttributes =
+                        case rspNewVal of
+                          Nothing -> delAttr attrOwner attrName   stateAttributes
+                          Just v  -> setAttr attrOwner attrName v stateAttributes
+
+                    , stateStatus =
+                        let newMs = enQs rspNewMessages workMore
+                        in
+                        case rspPassItOn of
+                          Nothing -> map WorkTodo (qToList newMs) ++ moreFrames
+                          Just newMsg ->
+                            WorkProgress
+                            WorkState
+                              { workMore = newMs
+                              , workTodo = moreTodo
+                              , workMessage = newMsg
+                              } : moreFrames
+
+                   , ..
+                   }
+
+
+
+
+traceState :: State -> [State]
+traceState s0 = s0 : unfoldr (fmap dup . stepState) s0
+  where dup x = (x,x)
 
 runState :: State -> State
 runState s =
@@ -94,36 +154,17 @@ runState s =
     Nothing -> s
     Just s1 -> runState s1
 
-showState :: State -> String
-showState State { .. } =
-  unlines (
-    [ showAttributes stateAttributes
-    , "~~~"
-    , showStaus stateStatus
-    , "~~~"
-    ] ++ map showShortMessage (qToList stateMessages)
-  )
-
 --------------------------------------------------------------------------------
-data Status = Idle
-            | MessageDone Message
-            | MessageWorking WorkState
 
 data WorkState = WorkState
-  { workMessage :: Message
-  , workTodo    :: [Attribute]
+  { workMessage :: !Message
+  , workTodo    :: ![Attribute]
+  , workMore    :: !(Q Message)
   }
 
-showStaus :: Status -> String
-showStaus s =
-  unlines
-  case s of
-    Idle          -> [ "[Idle]" ]
-    MessageDone m -> [ unwords [ "[Finished]", showShortMessage m ] ]
-    MessageWorking WorkState { .. } ->
-        unwords [ "[Working]", showShortMessage workMessage ]
-      : [ "  " ++ showShortAttr a | a <- workTodo ]
-
+data Frame = WorkProgress WorkState
+           | WorkTodo Message
+           | WorkDone Message
 
 
 --------------------------------------------------------------------------------
@@ -142,8 +183,8 @@ attributesToList (Attributes as) =
 noAttributes :: Attributes
 noAttributes = Attributes Map.empty
 
-deleteAttribute :: CharId -> AttributeName -> Attributes -> Attributes
-deleteAttribute cid nm (Attributes as) = Attributes (Map.update upd nm as)
+delAttr :: CharId -> AttributeName -> Attributes -> Attributes
+delAttr cid nm (Attributes as) = Attributes (Map.update upd nm as)
   where upd owns = let new = Map.delete cid owns
                    in if Map.null new then Nothing else Just new
 
@@ -162,7 +203,7 @@ groupAttributes = Map.fromListWith Map.union . map entry
 
 showCharAttrs :: CharId -> Map AttributeName Integer -> String
 showCharAttrs x as =
-  unlines $ ("Character " ++ show x ++ ":")
+  unlines $ show x
           : [ "  " ++ show a ++ " = " ++ show b | (a,b) <- Map.toList as ]
 
 showAttributes :: Attributes -> String
@@ -185,6 +226,13 @@ emptyQ = Q [] []
 enQ :: a -> Q a -> Q a
 enQ a (Q xs ys) = Q xs (a:ys)
 
+catQs :: Q a -> Q a -> Q a
+catQs (Q xs1 ys1) (Q xs2 ys2) =
+  case (ys1, xs2, ys2) of
+    ([], _,  _) -> Q (xs1 ++ xs2) ys2
+    (_, [],  _) -> Q xs1 (ys1 ++ ys2)
+    _           -> Q (xs1 ++ reverse ys1 ++ xs2) ys2
+
 -- | Front of list gets in queue
 enQs :: [a] -> Q a -> Q a
 enQs as (Q xs ys) = Q xs (reverse as ++ ys)
@@ -201,22 +249,13 @@ qFromList :: [a] -> Q a
 qFromList xs = Q xs []
 
 qToList :: Q a -> [a]
-qToList (Q xs ys) = xs ++ reverse ys
+qToList (Q xs ys) =
+  case ys of
+    [] -> xs
+    _  -> xs ++ reverse ys
 
 
 --------------------------------------------------------------------------------
 
-initState :: State
-initState = State { stateAttributes = noAttributes
-                  , stateMessages = emptyQ
-                  , stateStatus = Idle
-                  }
-
-
-see :: State -> IO ()
-see s = putStrLn (showState s)
-
---------------------------------------------------------------------------------
-next s = fromJust $ stepState s
 
 

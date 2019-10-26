@@ -24,9 +24,6 @@ data MessageResponse = MessageResponse
     -- In order.
   }
 
-data SinkResponse = AddMessage Message
-                  | NewAttribute Attribute
-
 data ResponsePart =
     SetAttr Integer
   | NewMessage Message

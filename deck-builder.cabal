@@ -11,14 +11,8 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 executable deck
-  other-modules:       Field,
-                       Deck,
-                       Player,
-                       Battle,
-                       Card,
-                       Enemy,
-                       RNG,
-                       Selector
+  other-modules:       Game, GameTypes,
+                       State, StateTypes
 
   build-depends:       base                 >=4.8,
                        text                 >=1.2,

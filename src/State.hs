@@ -1,144 +1,25 @@
 {-# Language RecordWildCards, BlockArguments #-}
-module Messages where
+module State where
 
 import Data.Map(Map)
 import qualified Data.Map as Map
 import Data.Maybe(fromJust)
 
+import GameTypes
+import StateTypes
+import Game
 
-data Attribute = Attribute
-  { attrName  :: !AttributeName
-  , attrValue :: !Integer
-  , attrOwner :: !CharId
-  }
+
 
 showShortAttr :: Attribute -> String
 showShortAttr Attribute { .. } =
   show attrOwner ++ ":" ++ show attrName ++ ":" ++ show attrValue
-
-
---------------------------------------------------------------------------------
-
-data Message = Message
-  { msgSender, msgReceiver :: !CharId
-  , msgPayload             :: !Event
-  }
-
-type CharId = Int
-
-
-
---------------------------------------------------------------------------------
-data MessageResponse = MessageResponse
-  { rspNewVal        :: !(Maybe Integer) -- ^ Nothing: delete attribute.
-  , rspPassItOn      :: !(Maybe Message) -- ^ Nothing: message consumed.
-  , rspNewMessages   :: ![Message]
-    -- ^ New messages for pipeline.
-    -- In order.
-  }
 
 showShortMessage :: Message -> String
 showShortMessage Message { .. } =
   show msgSender ++ "->" ++ show msgReceiver ++ ":" ++ show msgPayload
 
 
-
-
-data ResponsePart =
-    SetAttr Integer
-  | NewMessage Message
-  | Continue Message
-
-response :: [ResponsePart] -> MessageResponse
-response = foldr step done
-  where
-  done = MessageResponse { rspNewVal = Nothing
-                         , rspPassItOn = Nothing
-                         , rspNewMessages = []
-                         }
-  step s r = case s of
-               SetAttr a -> r { rspNewVal = Just a }
-               Continue m -> r { rspPassItOn = Just m }
-               NewMessage m -> r { rspNewMessages = m : rspNewMessages r }
-
-notForMe :: Integer -> Message -> MessageResponse
-notForMe a m = response [ SetAttr a, Continue m ]
-
-
-
-
---------------------------------------------------------------------------------
-
-
-data Event = Damage Integer
-           | GainBlock Integer
-           | Attack Integer
-           | Died
-             deriving Show
-
-
-
-
-
---------------------------------------------------------------------------------
-
-data AttributeName = Strength | Buffer | Thorns | HP
-  deriving (Eq,Ord, Show)  -- determines the order in which 
-
-
-handleMessage :: Attribute -> Message -> MessageResponse
-handleMessage Attribute { .. } msg@Message { .. } =
-  case attrName of
-
-    Strength
-      | source, Attack x <- msgPayload ->
-        response [ SetAttr attrValue
-                 , Continue msg { msgPayload = Attack (x + attrValue) }
-                 ]
-
-    Buffer
-      | target, Damage x <- msgPayload, x > 0 ->
-        response $ if attrValue == 1 then []
-                                     else [ SetAttr (attrValue - 1) ]
-
-    Thorns
-      | target, Attack _ <- msgPayload ->
-        response [ SetAttr attrValue
-                 , Continue msg
-                 , NewMessage Message { msgReceiver = msgSender
-                                      , msgSender   = msgReceiver
-                                      , msgPayload  = Damage attrValue
-                                      }
-                 ]
-
-    HP
-      | target, Damage x <- msgPayload ->
-        if x >= attrValue
-          then response [ NewMessage
-                          Message { msgReceiver = msgReceiver
-                                  , msgSender   = msgReceiver
-                                  , msgPayload  = Died
-                                  } ]
-          else response [ SetAttr (attrValue - x) ]
-
-
-    _ | target, Died <- msgPayload ->
-        response [ Continue msg ]
-
-    _ -> notForMe attrValue msg
-
-  where
-  target = msgReceiver == attrOwner
-  source = msgSender   == attrOwner
-
-sink :: Message -> [Message]
-sink msg@Message { .. } =
-  case msgPayload of
-    Attack n -> [ msg { msgPayload = Damage n } ]
-    _        -> []
-
-combineAttr :: AttributeName -> Integer {-^new-} -> Integer {-^old-} -> Integer
-combineAttr _ = (+)
 
 
 --------------------------------------------------------------------------------
@@ -175,10 +56,14 @@ stepState State { .. } =
                     }
 
     MessageDone m ->
-      pure State { stateStatus   = Idle
-                 , stateMessages = enQs (sink m) stateMessages
-                 , ..
-                 }
+      let rs = sink m
+      in pure State { stateStatus   = Idle
+                    , stateMessages = enQs [ msg | AddMessage msg <- rs ]
+                                           stateMessages
+                    , stateAttributes =
+                        foldr setAttrA stateAttributes
+                                        [ a | NewAttribute a <- rs ]
+                    }
 
     MessageWorking WorkState { .. } -> pure
       case workTodo of
@@ -248,10 +133,6 @@ showStaus s =
 
 newtype Attributes = Attributes (Map AttributeName (Map CharId Integer))
 
-attributesFromList :: [Attribute] -> Attributes
-attributesFromList = foldr add noAttributes
-  where add Attribute { .. } = addAttribute attrOwner attrName attrValue
-
 attributesToList :: Attributes -> [Attribute]
 attributesToList (Attributes as) =
   [ Attribute { .. }
@@ -261,16 +142,13 @@ attributesToList (Attributes as) =
 noAttributes :: Attributes
 noAttributes = Attributes Map.empty
 
-addAttribute :: CharId -> AttributeName -> Integer -> Attributes -> Attributes
-addAttribute cid nm val (Attributes as) =
-  Attributes (Map.insertWith jnMaps nm (Map.singleton cid val) as)
-  where
-  jnMaps = Map.unionWith (combineAttr nm)
-
 deleteAttribute :: CharId -> AttributeName -> Attributes -> Attributes
 deleteAttribute cid nm (Attributes as) = Attributes (Map.update upd nm as)
   where upd owns = let new = Map.delete cid owns
                    in if Map.null new then Nothing else Just new
+
+setAttrA :: Attribute ->  Attributes -> Attributes
+setAttrA Attribute { .. } = setAttr attrOwner attrName attrValue
 
 setAttr :: CharId -> AttributeName -> Integer -> Attributes -> Attributes
 setAttr cid nm v (Attributes as) =
@@ -329,10 +207,7 @@ qToList (Q xs ys) = xs ++ reverse ys
 --------------------------------------------------------------------------------
 
 initState :: State
-initState = State { stateAttributes = addAttribute 0 HP 7
-                                    $ addAttribute 1 HP 20
-                                    $ addAttribute 1 Buffer 1
-                                    $ noAttributes
+initState = State { stateAttributes = noAttributes
                   , stateMessages = emptyQ
                   , stateStatus = Idle
                   }

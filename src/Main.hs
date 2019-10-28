@@ -9,14 +9,26 @@ main = debug
 steps = traceState initS
 
 initS =
-    (CharId 0 ~> CharId 0) ShuffleDiscard
-  $ (CharId 0 ~> CardId 0) (ActivateCard (CharId 1))
-  $ (System ~> CharId 1) (GainAttribute HP 20)
-  $ (System ~> CharId 0) (GainAttribute HP 20)
-  $ (CharId 0 ~> CardId 0) (GainAttribute (Card Strike InHand) 7)
-  $ sys      (GainAttribute Approved 0)
-  $ initState
+    (CharId 0 ~> CardId 0) (ActivateCardOn (CharId 1))
+  $ (CharId 0 ~> System) DrawTop
+  $ (CharId 0 ~> CardId 0) (Card strike := 0)
+  $ (CharId 0 ~> CardId 1) (Card defend := 0)
+  $ (CharId 0 ~> CardId 2) (Card defend := 0)
+  $ setup
 
+
+
+setup = (System ~> CharId 1) (HP := 30)
+      $ (System ~> CharId 0) (Count InDiscard := 0)
+      $ (System ~> CharId 0) (Count InDraw := 0)
+      $ (System ~> CharId 0) (Count InHand := 0)
+      $ (System ~> CharId 0) (HP := 20)
+      $ sys (Approved := 0)
+      $ initState 0
+
+
+strike = CardInfo { cardName = Strike, cardLocation = InDiscard }
+defend = CardInfo { cardName = Defend, cardLocation = InDiscard }
 x ~> y = sendMessage x y
 sys    = sendMessage System System
 

@@ -4,6 +4,7 @@ module State where
 import Data.Map(Map)
 import qualified Data.Map as Map
 import Data.List(unfoldr)
+import RNG
 
 import GameTypes
 import StateTypes
@@ -36,7 +37,6 @@ showState State { .. } =
 showFrame :: Frame -> String
 showFrame f =
   case f of
-    WorkDone m -> unwords [ "[Finished]", showShortMessage m ]
     WorkTodo m -> unwords [ "[Todo]", showShortMessage m ]
     WorkProgress WorkState { .. } ->
       unlines $
@@ -56,20 +56,22 @@ showStaus = unlines . map showFrame
 
 --------------------------------------------------------------------------------
 
-data State = State { stateAttributes :: Attributes
-                   , stateStatus     :: [Frame]
-                   , stateMessages   :: Q Message
+data State = State { stateAttributes :: !Attributes
+                   , stateStatus     :: ![Frame]
+                   , stateMessages   :: !(Q Message)
+                   , stateRNG        :: !RNG
                    }
 
 
 instance Show State where
   show = showState
 
-initState :: State
-initState = State { stateAttributes = noAttributes
-                  , stateMessages = emptyQ
-                  , stateStatus = []
-                  }
+initState :: Int -> State
+initState seed = State { stateAttributes = noAttributes
+                       , stateMessages = emptyQ
+                       , stateStatus = []
+                       , stateRNG = seededRNG seed
+                       }
 
 sendMessage :: CharId -> CharId -> Event -> State -> State
 sendMessage msgSender msgReceiver msgPayload = sendMessages [ Message { .. } ]
@@ -91,11 +93,6 @@ stepState State { .. } =
     f : moreFrames -> pure
 
       case f of
-        WorkDone m ->
-          State { stateStatus     = moreFrames
-                , stateAttributes = foldr setAttrA stateAttributes (sink m)
-                , ..
-                }
 
         WorkTodo m ->
           State { stateStatus =
@@ -110,11 +107,24 @@ stepState State { .. } =
         WorkProgress WorkState { .. } ->
           case workTodo of
 
-            [] -> State { stateStatus   = WorkDone workMessage
-                                        : map WorkTodo (qToList workMore)
+            [] ->
+              case sink workMessage of
+                SinkAttrs as ->
+                  State { stateStatus = map WorkTodo (qToList workMore)
                                        ++ moreFrames
+                        , stateAttributes = foldr setAttrA stateAttributes as
                         , ..
                         }
+
+                SinkRNG m ->
+                  genRandFun stateRNG
+                    do xs <- m
+                       let q1 = enQs xs workMore
+                       pure \newR -> State
+                         { stateStatus = map WorkTodo (qToList q1) ++ moreFrames
+                         , stateRNG = newR
+                         , ..
+                         }
 
             a@Attribute { .. } : moreTodo ->
               case handleMessage a workMessage of
@@ -164,7 +174,6 @@ data WorkState = WorkState
 
 data Frame = WorkProgress WorkState
            | WorkTodo Message
-           | WorkDone Message
 
 
 --------------------------------------------------------------------------------

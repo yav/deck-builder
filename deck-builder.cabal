@@ -12,7 +12,8 @@ cabal-version:       >=1.10
 
 executable deck
   other-modules:       Game, GameTypes,
-                       State, StateTypes
+                       State, StateTypes,
+                       RNG
 
   build-depends:       base                 >=4.8,
                        text                 >=1.2,

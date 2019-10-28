@@ -8,20 +8,32 @@ data CharId = CharId Int
 data Event = Damage Integer
            | Attack Integer
            | Died
-           | GainAttribute AttributeName Integer
-           | ActivateCard CharId
-           | Discard CardName CardLocation Integer
-           | ShuffleDiscard
+           | AttributeName := Integer
+           | ActivateCardOn CharId
+           | MoveTo CardLocation
+           | DrawTop  -- ^ draw top card from draw pile
+           | DrawTopAgain -- ^ draw top after reshuffling
+           | ShuffleDiscard ShuffleStatus
              deriving Show
+
+data ShuffleStatus = ShuffleBegin
+                   | ChooseOrder Integer
+                   | ShuffleCards [Integer]
+                    deriving Show
 
 data AttributeName = Count CardLocation
                    | Strength | Buffer | Thorns
                    | Block | HP
-                   | Card CardName CardLocation
+                   | Card !CardInfo   -- value is index in deck
                    | Approved
   deriving (Eq,Ord, Show)  -- determines the order in which 
 
-data CardName = Strike
+data CardInfo = CardInfo
+  { cardName     :: CardName
+  , cardLocation :: CardLocation
+  } deriving (Eq,Ord,Show)
+
+data CardName = Strike | Defend
   deriving (Eq,Ord,Show)
 
 data CardLocation = InDraw | InHand | InDiscard | Exhausted

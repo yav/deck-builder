@@ -1,6 +1,7 @@
 module StateTypes where
 
 import GameTypes
+import RNG
 
 
 data Attribute = Attribute
@@ -13,6 +14,12 @@ data Message = Message
   { msgSender, msgReceiver :: !CharId
   , msgPayload             :: !Event
   }
+
+data SinkResponse =
+    SinkAttrs [Attribute]
+    -- ^ Set the given attributes
+
+  | SinkRNG (Gen [Message])
 
 
 

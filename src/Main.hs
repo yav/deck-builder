@@ -1,7 +1,8 @@
+{-# Language FlexibleContexts #-}
 module Main where
 
+import Game
 import State
-import GameTypes
 
 main :: IO ()
 main = debug

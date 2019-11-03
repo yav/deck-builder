@@ -1,27 +1,99 @@
 {-# Language RecordWildCards, BlockArguments #-}
-module State where
+{-# Language TypeFamilies, FlexibleContexts #-}
+module State
+  ( Game(..)
+
+  , State
+  , initState
+  , sendMessage, sendMessages
+  , stepState, traceState, runState
+
+  , Attribute(..)
+
+  , Message(..)
+
+  , MessageResponse
+  , ResponsePart(..), response, notForMe
+
+  , SinkResponse(..)
+
+  ) where
 
 import Data.Map(Map)
 import qualified Data.Map as Map
 import Data.List(unfoldr)
 import RNG
 
-import GameTypes
-import StateTypes
-import Game
+
+import Q
+
+class ( Ord (AttributeName g), Ord (CharId g)
+      , Show (CharId g), Show (Event g), Show (AttributeName g)
+      ) => Game g where
+  data AttributeName g
+  data CharId g
+  data Event g
+
+  handleMessage :: Attribute g -> Message g -> MessageResponse g
+  sink          :: Message g -> SinkResponse g
+
+
+data Message g = Message
+  { msgSender, msgReceiver :: !(CharId g)
+  , msgPayload             :: !(Event g)
+  }
+
+data SinkResponse g =
+    SinkAttrs [Attribute g]
+    -- ^ Set the given attributes
+
+  | SinkRNG (Gen [Message g])
+
+
+
+data MessageResponse g = MessageResponse
+  { rspNewVal        :: !(Maybe Integer)     -- ^ Nothing: delete attribute.
+  , rspPassItOn      :: !(Maybe (Message g)) -- ^ Nothing: message consumed.
+  , rspNewMessages   :: ![Message g]
+    -- ^ New messages for pipeline.
+    -- In order.
+  }
+
+data ResponsePart g =
+    SetAttr Integer
+  | NewMessage (Message g)
+  | Continue (Message g)
+
+response :: [ResponsePart g] -> MessageResponse g
+response = foldr step done
+  where
+  done = MessageResponse { rspNewVal = Nothing
+                         , rspPassItOn = Nothing
+                         , rspNewMessages = []
+                         }
+  step s r = case s of
+               SetAttr a -> r { rspNewVal = Just a }
+               Continue m -> r { rspPassItOn = Just m }
+               NewMessage m -> r { rspNewMessages = m : rspNewMessages r }
+
+notForMe :: Integer -> Message g -> MessageResponse g
+notForMe a m = response [ SetAttr a, Continue m ]
+
+
+
 
 
 --------------------------------------------------------------------------------
 
-showShortAttr :: Attribute -> String
+showShortAttr :: Game g => Attribute g -> String
 showShortAttr Attribute { .. } =
   show attrOwner ++ ":" ++ show attrName ++ ":" ++ show attrValue
 
-showShortMessage :: Message -> String
+showShortMessage :: Game g => Message g -> String
 showShortMessage Message { .. } =
   show msgSender ++ "->" ++ show msgReceiver ++ ":" ++ show msgPayload
 
-showState :: State -> String
+showState :: Game g => State g -> String
 showState State { .. } =
   unlines (
     [ replicate 80 '='
@@ -34,7 +106,7 @@ showState State { .. } =
     [ replicate 80 '=' ]
   )
 
-showFrame :: Frame -> String
+showFrame :: Game g => Frame g -> String
 showFrame f =
   case f of
     WorkTodo m -> unwords [ "[Todo]", showShortMessage m ]
@@ -48,39 +120,67 @@ showFrame f =
                  [ "  " ++ showShortMessage m | m <- ms ])
 
 
-showStaus :: [Frame] -> String
+showStaus :: Game g => [Frame g] -> String
 showStaus = unlines . map showFrame
+
+
+instance Game g => Show (State g) where
+  show = showState
+
+showCharAttrs :: Game g => CharId g -> Map (AttributeName g) Integer -> String
+showCharAttrs x as =
+  unlines $ show x
+          : [ "  " ++ show a ++ " = " ++ show b | (a,b) <- Map.toList as ]
+
+showAttributes :: Game g => Attributes g -> String
+showAttributes = unlines
+               . map (uncurry showCharAttrs)
+               . Map.toList
+               . groupAttributes
+               . attributesToList
+
 
 
 
 
 --------------------------------------------------------------------------------
 
-data State = State { stateAttributes :: !Attributes
-                   , stateStatus     :: ![Frame]
-                   , stateMessages   :: !(Q Message)
-                   , stateRNG        :: !RNG
-                   }
+data State g = State { stateAttributes :: !(Attributes g)
+                     , stateStatus     :: ![Frame g]
+                     , stateMessages   :: !(Q (Message g))
+                     , stateRNG        :: !RNG
+                     }
+
+data Frame g = WorkProgress (WorkState g)
+             | WorkTodo (Message g)
+
+data WorkState g = WorkState
+  { workMessage :: !(Message g)
+  , workTodo    :: ![Attribute g]
+  , workMore    :: !(Q (Message g))
+  }
 
 
-instance Show State where
-  show = showState
 
-initState :: Int -> State
+--------------------------------------------------------------------------------
+
+
+
+initState :: Int -> State g
 initState seed = State { stateAttributes = noAttributes
                        , stateMessages = emptyQ
                        , stateStatus = []
                        , stateRNG = seededRNG seed
                        }
 
-sendMessage :: CharId -> CharId -> Event -> State -> State
+sendMessage :: CharId g -> CharId g -> Event g -> State g -> State g
 sendMessage msgSender msgReceiver msgPayload = sendMessages [ Message { .. } ]
 
-sendMessages :: [Message] -> State -> State
+sendMessages :: [Message g] -> State g -> State g
 sendMessages msgs State { .. } =
   State { stateMessages = enQs msgs stateMessages, .. }
 
-stepState :: State -> Maybe State
+stepState :: Game g => State g -> Maybe (State g)
 stepState State { .. } =
   case stateStatus of
     [] ->
@@ -132,8 +232,9 @@ stepState State { .. } =
                   State
                     { stateAttributes =
                         case rspNewVal of
-                          Nothing -> delAttr attrOwner attrName   stateAttributes
-                          Just v  -> setAttr attrOwner attrName v stateAttributes
+                          Nothing -> delAttr attrOwner attrName stateAttributes
+                          Just v  -> setAttr attrOwner attrName v
+                                                                stateAttributes
 
                     , stateStatus =
                         let newMs = enQs rspNewMessages workMore
@@ -154,117 +255,62 @@ stepState State { .. } =
 
 
 
-traceState :: State -> [State]
+traceState :: Game g => State g -> [State g]
 traceState s0 = s0 : unfoldr (fmap dup . stepState) s0
   where dup x = (x,x)
 
-runState :: State -> State
+runState :: Game g => State g -> State g
 runState s =
   case stepState s of
     Nothing -> s
     Just s1 -> runState s1
 
+
 --------------------------------------------------------------------------------
 
-data WorkState = WorkState
-  { workMessage :: !Message
-  , workTodo    :: ![Attribute]
-  , workMore    :: !(Q Message)
+data Attribute g = Attribute
+  { attrName  :: !(AttributeName g)
+  , attrValue :: !Integer
+  , attrOwner :: !(CharId g)
   }
 
-data Frame = WorkProgress WorkState
-           | WorkTodo Message
 
 
---------------------------------------------------------------------------------
+newtype Attributes g = Attributes (Map (AttributeName g)
+                                  (Map (CharId g) Integer))
 
-
---------------------------------------------------------------------------------
-
-newtype Attributes = Attributes (Map AttributeName (Map CharId Integer))
-
-attributesToList :: Attributes -> [Attribute]
+attributesToList :: Game g => Attributes g -> [Attribute g]
 attributesToList (Attributes as) =
   [ Attribute { .. }
   | (attrName,owns) <- Map.toList as, (attrOwner,attrValue) <- Map.toList owns
   ]
 
-noAttributes :: Attributes
+noAttributes :: Attributes g
 noAttributes = Attributes Map.empty
 
-delAttr :: CharId -> AttributeName -> Attributes -> Attributes
+delAttr :: Game g => CharId g -> AttributeName g -> Attributes g -> Attributes g
 delAttr cid nm (Attributes as) = Attributes (Map.update upd nm as)
   where upd owns = let new = Map.delete cid owns
                    in if Map.null new then Nothing else Just new
 
-setAttrA :: Attribute ->  Attributes -> Attributes
+setAttrA :: Game g => Attribute g -> Attributes g -> Attributes g
 setAttrA Attribute { .. } = setAttr attrOwner attrName attrValue
 
-setAttr :: CharId -> AttributeName -> Integer -> Attributes -> Attributes
+setAttr :: Game g => CharId g -> AttributeName g -> Integer ->
+                                          Attributes g -> Attributes g
 setAttr cid nm v (Attributes as) =
   Attributes (Map.insertWith Map.union nm (Map.singleton cid v) as)
 
 
-groupAttributes :: [Attribute] -> Map CharId (Map AttributeName Integer)
+groupAttributes :: Game g => [Attribute g] ->
+                   Map (CharId g) (Map (AttributeName g) Integer)
 groupAttributes = Map.fromListWith Map.union . map entry
   where
   entry a = (attrOwner a, Map.singleton (attrName a) (attrValue a))
 
-showCharAttrs :: CharId -> Map AttributeName Integer -> String
-showCharAttrs x as =
-  unlines $ show x
-          : [ "  " ++ show a ++ " = " ++ show b | (a,b) <- Map.toList as ]
-
-showAttributes :: Attributes -> String
-showAttributes = unlines
-               . map (uncurry showCharAttrs)
-               . Map.toList
-               . groupAttributes
-               . attributesToList
 
 
 
-
---------------------------------------------------------------------------------
-
-data Q a = Q [a] [a]
-
-emptyQ :: Q a
-emptyQ = Q [] []
-
-enQ :: a -> Q a -> Q a
-enQ a (Q xs ys) = Q xs (a:ys)
-
-catQs :: Q a -> Q a -> Q a
-catQs (Q xs1 ys1) (Q xs2 ys2) =
-  case (ys1, xs2, ys2) of
-    ([], _,  _) -> Q (xs1 ++ xs2) ys2
-    (_, [],  _) -> Q xs1 (ys1 ++ ys2)
-    _           -> Q (xs1 ++ reverse ys1 ++ xs2) ys2
-
--- | Front of list gets in queue
-enQs :: [a] -> Q a -> Q a
-enQs as (Q xs ys) = Q xs (reverse as ++ ys)
-
-deQ :: Q a -> Maybe (a, Q a)
-deQ (Q xs ys) =
-  case xs of
-    x : more -> Just (x, Q more ys)
-    [] -> case reverse ys of
-            [] -> Nothing
-            x : more -> Just (x, Q more [])
-
-qFromList :: [a] -> Q a
-qFromList xs = Q xs []
-
-qToList :: Q a -> [a]
-qToList (Q xs ys) =
-  case ys of
-    [] -> xs
-    _  -> xs ++ reverse ys
-
-
---------------------------------------------------------------------------------
 
 
 

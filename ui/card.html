@@ -1,118 +1,26 @@
 <html>
 <head>
 <script src="jquery.js"></script>
+<script src="card.js"></script>
 <script>
-function thing(x) {
-  return $('<div/>').addClass(x)
-}
-
-
-function card(w,c) {
-  var dom = thing('card')
-          .css('width',w)
-          .css('height',1.5 * w)
-          .css('background-color', c.color)
-          .css('font-size', w / 10)
-
-  var t = thing('card-title').text(c.title)
-  var i = thing('card-image')
-        .css('background-image','url("' + c.image + '")')
-  var d = thing('card-text')
-  jQuery.each(c.description,function(i,l) {
-    d.append($('<span/>').text(l))
-  })
-  return dom.append(t,i,d)
-}
-
-function smallCard(c) {
-  var dom = card(128,c)
-  dom.click(function() {
-    dom.toggleClass('selected')
-  })
-  return dom
-}
-
-
 $(document).ready(function() {
   var b = $('body')
   var c = { title: 'Card 1', description: ['One','Two'], color: 'red'
+          , rarity: 'rare'
           , image: 'sample.png' }
   var h = thing('card-container')
   for (var i = 0; i < 10 ; ++i) {
-    var d = jQuery.extend(c,{description: ['Description','Card #' + i]})
+    var d = jQuery.extend(c, { description: ['Description','Card #' + i]
+                             , color: ['red','blue','green'][i % 3]
+                             , rarity: ['normal','rare'][i%2]
+                             , cost: i
+                             })
     h.append(smallCard(d))
   }
   b.append(h)
 })
 </script>
-<style>
-
-.selected {
-  box-shadow: 0px 0px 20px yellow;
-  z-index: 1;
-}
-
-.card-container {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  align-items: center;
-  background-color: rgba(0,0,0,0.5);
-  height: 500px;
-  width: 500px;
-  overflow: scroll;
-}
-
-.card:hover {
-  transform: scale(1.2);
-  z-index: 2;
-}
-
-.card {
-  border-radius: 5%;
-  border: solid 1px black;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex-wrap: no-wrap;
-  justify-content: space-evenly;
-  align-items: center;
-}
-.card-title {
-  width: 95%;
-  background-color: rgba(0,0,0,0.5);
-  color: white;
-  border-radius: 10px;
-  text-align: center;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.card-image {
-  width: 95%;
-  height: 45%;
-  background-color: black;
-  border-top-left-radius: 5%;
-  border-top-right-radius: 5%;
-  background-repeat: no-repeat;
-  background-size: contain;
-  background-position: center;
-}
-.card-text {
-  width:  95%;
-  height: 45%;
-  color: white;
-  background-color: rgba(0,0,0,0.5);
-  border-bottom-left-radius: 5%;
-  border-bottom-right-radius: 5%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-}
-
-<style>
+<link rel="stylesheet" type="text/css" href="card.css">
 </head>
 <body>
 </body>

@@ -1,7 +1,7 @@
 {-# LANGUAGE Trustworthy, BlockArguments #-}
 module RNG
   ( Gen
-  , genRand, genRand_, withRNG
+  , genRand, genRand_, genRandFun
   , genRandIO, genRandIO_
   , RNG, newRNG, withNewRNG, seededRNG
 
@@ -39,8 +39,8 @@ seededRNG = RNG . Rand.mkTFGen
 
 
 genRand :: RNG -> Gen a -> (a, RNG)
-genRand g m = withRNG g do a <- m
-                           pure \r -> (a,r)
+genRand g m = genRandFun g do a <- m
+                              pure \r -> (a,r)
 
 genRand_ :: RNG -> Gen a -> a
 genRand_ g m = fst (genRand g m)
@@ -52,9 +52,9 @@ genRandIO_ :: Gen a -> IO a
 genRandIO_ m = withNewRNG (`genRand_` m)
 
 
-withRNG :: RNG -> Gen (RNG -> a) -> a
-withRNG (RNG g) (Gen m) = let (f,g1) = m g
-                          in f (RNG g1)
+genRandFun :: RNG -> Gen (RNG -> a) -> a
+genRandFun (RNG g) (Gen m) = let (f,g1) = m g
+                                in f (RNG g1)
 
 
 newtype Gen a = Gen (Rand.TFGen -> (a,Rand.TFGen))
@@ -74,7 +74,7 @@ instance Monad Gen where
 -- | Get a new randomness source.
 randRNG :: Gen RNG
 randRNG = Gen (\g -> let (g1,g2) = Rand.split g
-                     in (RNG g1, g2))
+                        in (RNG g1, g2))
 
 -- | Shuffle the elements of the given input
 shuffle :: [a] -> Gen [a]

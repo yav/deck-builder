@@ -11,7 +11,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 executable deck
-  other-modules:       State, Game, Q
+  other-modules:       State, Game
                        RNG
 
   build-depends:       base                 >=4.8,

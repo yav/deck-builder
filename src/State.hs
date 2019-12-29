@@ -1,130 +1,256 @@
-{-# Language BlockArguments #-}
-module State where
+module State
+  ( Action, Card
 
+  -- * The State
+  , doAction
+  , State, newState
+  , Script(..)
+
+  -- * Fields
+  , Field, get, set, update
+
+  -- * Piles
+  , Pile
+  , theDrawPile, theDiscarded, theExhausted, theHand
+  , removeFrom, addTo, addToDrawBottom, addToDrawRandom
+
+  -- * Randomness
+  , random
+
+  -- * Interaction
+  , choose, Count(..)
+
+  -- * Events
+  , CardEvents(..)
+  , doEvent
+  , newCard
+  , PlayResult(..)
+
+  -- * Entities
+  , player, getEnemies, enemy, enemyAttrs
+  , EnemyState
+
+  -- * Attributes
+  , Attribute(..)
+  , module A
+
+  ) where
+
+import Data.Map(Map)
+import qualified Data.Map as Map
+import Control.Monad(liftM,ap)
 import RNG
+import Field
+import Attributes as A
 
-data Card = Card
-  {
-  }
+type Card = Int
+type Enemy = Int
 
 data State = State
-  { drawPile     :: [Card]
-  , hand         :: [Card]
-  , discarded    :: [Card]
-  , exhausted    :: [Card]
-  , selected     :: Maybe Card
-  , rng          :: RNG
+  { _drawPile    :: [Card]
+  , _hand        :: [Card]
+  , _discarded   :: [Card]
+  , _exhausted   :: [Card]
+  , _rng         :: RNG
+  , _cardEvents  :: Map Card CardEvents
+  , _nextCard    :: Card
+  , _player      :: Attributes
+  , _enemies     :: Map Enemy EnemyState
+  , _nextEnemy   :: Int
   }
 
+
+data EnemyState = EnemyState
+  { _enemyAttrs :: Attributes
+  }
+
+data PlayResult = Unplayable | Played | NeedsTarget
+
+data CardEvents = CardEvents
+  { atEndOfTurn     :: Action ()
+  , whenPlay        :: Action PlayResult
+  , afterPlay       :: Action ()
+  , whenExhausted   :: Action ()
+  , whenRetained    :: Action ()
+  , whenDiscarded   :: Action ()
+  , self            :: Card
+  }
+
+newState :: RNG -> State
+newState r = State
+  { _drawPile   = []
+  , _hand       = []
+  , _discarded  = []
+  , _exhausted  = []
+  , _rng        = r
+  , _cardEvents = Map.empty
+  , _nextCard   = 0
+  , _nextEnemy  = 0
+  , _player     = noAttributes
+  , _enemies    = Map.empty
+  }
+
+--------------------------------------------------------------------------------
+newtype Action a = Action ((a -> State -> Script) -> State -> Script)
+
+choose :: String -> Count -> Int -> [Card] -> Action [Card]
+choose msg c n cs = Action \k -> case c of
+                                   Exactly
+                                     | n >= length cs -> k cs
+                                   _ -> \s -> Choose msg c n cs \sel -> k sel s
+
+get :: Field a -> Action a
+get f = Action \k -> \s -> k (getField f s) s
+
+set :: Field a -> a -> Action ()
+set f a = Action \k -> k () . setField f a
+
+update :: Field a -> (a -> a) -> Action ()
+update x f = set x . f =<< get x
+
+doAction :: Action () -> State -> Script
+doAction (Action m) = m \_ -> Done
+
+
+instance Functor Action where
+  fmap = liftM
+
+instance Applicative Action where
+  pure a = Action \k -> k a
+  (<*>)  = ap
+
+instance Monad Action where
+  Action m >>= f = Action \k -> m \a -> let Action m1 = f a in m1 k
 
 
 --------------------------------------------------------------------------------
-data Pile = Pile { getCardsFrom :: State -> [Card]
-                 , setCardsIn   :: [Card] -> State -> State
-                 }
+-- Script
+
+data Script = Choose String Count Int [Card] ([Card] -> Script)
+            | Done State
+
+data Count  = UpTo | Exactly
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+-- Fields
+
+type Field = FieldOf State
+type Pile = Field [Card]
 
 theDrawPile :: Pile
-theDrawPile = Pile { getCardsFrom = drawPile
-                   , setCardsIn   = \cs s -> s { drawPile = cs }
-                   }
+theDrawPile = Field { getField = _drawPile
+                    , setField = \cs s -> s { _drawPile = cs }
+                    }
 
 theDiscarded :: Pile
-theDiscarded = Pile { getCardsFrom = discarded
-                    , setCardsIn   = \cs s -> s { discarded = cs }
-                    }
+theDiscarded = Field { getField = _discarded
+                     , setField = \cs s -> s { _discarded = cs }
+                     }
 
 
 theExhausted :: Pile
-theExhausted = Pile { getCardsFrom = exhausted
-                    , setCardsIn   = \cs s -> s { exhausted = cs }
-                    }
+theExhausted = Field { getField = _exhausted
+                     , setField = \cs s -> s { _exhausted = cs }
+                     }
 
 theHand :: Pile
-theHand = Pile { getCardsFrom = hand
-               , setCardsIn   = \cs s -> s { hand = cs }
+theHand = Field { getField = _hand
+                , setField = \cs s -> s { _hand = cs }
+                }
+
+
+nextCard :: Field Card
+nextCard = Field { getField = _nextCard
+                 , setField = \x s -> s { _nextCard = x }
+                 }
+
+player :: Field Attributes
+player = Field { getField = _player
+               , setField = \x s -> s { _player = x }
                }
---------------------------------------------------------------------------------
+
+enemy :: Enemy -> Field EnemyState
+enemy e = enemiesF ~> mapField e
+
+enemiesF :: Field (Map Enemy EnemyState)
+enemiesF = Field { getField = _enemies
+                 , setField = \x s -> s { _enemies = x }
+                 }
+
+enemyAttrs :: FieldOf EnemyState Attributes
+enemyAttrs = Field { getField = _enemyAttrs
+                   , setField = \x s -> s { _enemyAttrs = x }
+                   }
+
+getEnemies :: Action [Enemy]
+getEnemies = Map.keys <$> get enemiesF
 
 
 
 --------------------------------------------------------------------------------
 
--- | Update the state with the given function, but only if something is selected
-whenSelected :: (Card -> State -> State) -> State -> State
-whenSelected k s =
-  case selected s of
-    Just a  -> k a s
-    Nothing -> s
+events :: Field (Map Card CardEvents)
+events = Field { getField = _cardEvents
+               , setField = \m s -> s { _cardEvents = m }
+               }
 
--- | Update the state with the given function, but only if nothing is selected
-whenNotSelected :: (State -> State) -> State -> State
-whenNotSelected k s =
-  case selected s of
-    Just _  -> s
-    Nothing -> k s
+doEvent :: Card -> (CardEvents -> Action a) -> Action a
+doEvent c e =
+  do es <- get events
+     e (es Map.! c)
 
--- | Clear the selection, do an update, and then restore the selection
--- to what it was originallt.
-saveSelected :: (State -> State) -> State -> State
-saveSelected k s =
-  let it = selected s
-      s1 = k s { selected = Nothing }
-  in s1 { selected = it }
-
---------------------------------------------------------------------------------
-
-
-
--- | Shuffle in the discarded in the draw pile.
-reshuffle :: State -> State
-reshuffle s =
-  withRNG (rng s)
-  do newDraw <- shuffle (drawPile s ++ discarded s)
-     pure \r -> s { drawPile = newDraw, discarded = [], rng = r }
-
-
--- | Move the top card of the draw deck (if any) to the hand.
--- Reshuffles the discard pile, if neccessary.
-drawCard :: State -> State
-drawCard = saveSelected (whenNotSelected (draw . reshuffle) . draw)
-  where draw = selectFrom theDrawPile 0
-
-
--- | Select a card at a specific location in a draw pile.
-selectFrom :: Pile -> Int -> State -> State
-selectFrom p n s =
-  case removeAt n (getCardsFrom p s) of
-    Just (a,ys) -> setCardsIn p ys s { selected = Just a }
-    Nothing     -> s
+newCard :: (Card -> CardEvents) -> Action Card
+newCard es =
+  do c <- get nextCard
+     update events (Map.insert c (es c))
+     set nextCard (c + 1)
+     pure c
 
 
 
 --------------------------------------------------------------------------------
 
--- | Move the selected card to the top of the given pile.
-selectedTo :: Pile -> State -> State
-selectedTo p =
-  whenSelected \a s ->
-  setCardsIn p (a : getCardsFrom p s) s { selected = Nothing }
+-- | Do something with randomness.
+random :: Gen a -> Action a
+random m =
+  do r0 <- get rng
+     let (a,r) = withRNG r0 ((,) <$> m)
+     set rng r
+     pure a
+  where
+  rng = Field { getField = _rng
+              , setField = \a s -> s { _rng = a }
+              }
 
 
--- | Move the selected card to the bottom of the draw deck.
-selectedToDrawBottom :: State -> State
-selectedToDrawBottom =
-  whenSelected \a s ->
-  s { drawPile = drawPile s ++ [a], selected = Nothing }
+-- | Remove the card at a specific location in a pile.
+removeFrom :: Pile -> Int -> Action (Maybe Card)
+removeFrom p n =
+  do cs <- get p
+     case removeAt n cs of
+       Just (a,ys) -> set p ys *> pure (Just a)
+       Nothing     -> pure Nothing
 
--- | Shuffle the selected card in the draw deck.
-selectedToDrawRandom :: State -> State
-selectedToDrawRandom =
-  whenSelected \a s ->
-  withRNG (rng s)
-  do let cs = drawPile s
-     n <- randInRange 0 (length cs + 1)
-     pure \r -> s { drawPile = insertAt n a cs
-                  , selected = Nothing
-                  , rng      = r
-                  }
+-- | Add a card to a gie pile.
+-- Assumes the card is not in any other pile.
+addTo :: Pile -> Card -> Action ()
+addTo p c = update p (c :)
+
+-- | Add a card to the bottom of the draw pile.
+-- Assumes the card is not in any other pile.
+addToDrawBottom :: Card -> Action ()
+addToDrawBottom c = update theDrawPile (++ [c])
+
+
+-- | Shuffle a card in the draw pile.
+-- Assumes the card is not in any other pile.
+addToDrawRandom :: Card -> Action ()
+addToDrawRandom c =
+  do cs <- get theDrawPile
+     n  <- random (randInRange 0 (length cs + 1))
+     set theDrawPile (insertAt n c cs)
 --------------------------------------------------------------------------------
 
 

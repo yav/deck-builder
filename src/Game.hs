@@ -1,6 +1,6 @@
 module Game where
 
-import Control.Monad(forM_, replicateM_)
+import Control.Monad(forM_, replicateM_,when)
 import RNG
 import Field
 import State
@@ -45,13 +45,8 @@ endOfRound =
 
 startPlayerTurn :: Action ()
 startPlayerTurn =
-  do replicateM_ 5 drawCard
-
-endPlayerTurn :: Action ()
-endPlayerTurn =
-  do cs <- get theHand
-     set theHand []
-     forM_ cs \c -> doEvent c atEndOfTurn
+  do update turn (+1)
+     replicateM_ 5 drawCard
 
 enemyTurn :: Action ()
 enemyTurn = pure () --- XXX
@@ -74,18 +69,29 @@ discardCard c =
      addTo theDiscarded c
 
 
--- | Play this card.
--- Assumes the card is not in any of the piles.
-playCard :: Card -> Action ()
-playCard c = undefined
 
-{-
-  do yes <- doEvent c playCard
+
+
+
+--------------------------------------------------------------------------------
+
+
+
+playCardFromHand :: Card -> CardTaget -> Action ()
+playCardFromHand c tgt =
+  do yes <- doEvent1 c isPlayable tgt
      when yes
-       do doEvent c afterPlay
+       do removeCardFrom theHand c
+          doEvent1 c whenPlay tgt
+          doEvent c afterPlay
 
-playCardOn :: Card -> Enemy -> Action ()
-playCardOn = undefined
--}
+endPlayerTurn :: Action ()
+endPlayerTurn =
+  do cs <- get theHand
+     set theHand []
+     forM_ cs \c -> doEvent c atEndOfTurn
+     enemyTurn
+     endOfRound
+     startPlayerTurn
 
 

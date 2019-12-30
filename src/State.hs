@@ -1,5 +1,5 @@
 module State
-  ( Action, Card
+  ( Action, Card, Enemy, turn
 
   -- * The State
   , doAction
@@ -13,6 +13,7 @@ module State
   , Pile
   , theDrawPile, theDiscarded, theExhausted, theHand
   , removeFrom, addTo, addToDrawBottom, addToDrawRandom
+  , removeCardFrom
 
   -- * Randomness
   , random
@@ -22,26 +23,32 @@ module State
 
   -- * Events
   , CardEvents(..)
-  , doEvent
+  , doEvent, doEvent1
   , newCard
-  , PlayResult(..)
+  , CardTaget(..)
 
   -- * Entities
   , player, getEnemies, enemy, enemyAttrs
+  , enemies
   , EnemyState
 
   -- * Attributes
   , Attribute(..)
   , module A
 
+  -- * PP
+  , ppCard
+
   ) where
 
+import Data.List(delete)
 import Data.Map(Map)
 import qualified Data.Map as Map
 import Control.Monad(liftM,ap)
 import RNG
 import Field
 import Attributes as A
+import PP
 
 type Card = Int
 type Enemy = Int
@@ -57,23 +64,27 @@ data State = State
   , _player      :: Attributes
   , _enemies     :: Map Enemy EnemyState
   , _nextEnemy   :: Int
+  , _turn        :: Int
   }
 
 
 data EnemyState = EnemyState
   { _enemyAttrs :: Attributes
+  , _enemyName  :: String
   }
 
-data PlayResult = Unplayable | Played | NeedsTarget
+data CardTaget = NoTaget | Target Enemy
 
 data CardEvents = CardEvents
   { atEndOfTurn     :: Action ()
-  , whenPlay        :: Action PlayResult
+  , whenPlay        :: CardTaget -> Action ()
   , afterPlay       :: Action ()
   , whenExhausted   :: Action ()
   , whenRetained    :: Action ()
   , whenDiscarded   :: Action ()
+  , isPlayable      :: CardTaget -> Action Bool
   , self            :: Card
+  , cardName        :: String
   }
 
 newState :: RNG -> State
@@ -88,16 +99,19 @@ newState r = State
   , _nextEnemy  = 0
   , _player     = noAttributes
   , _enemies    = Map.empty
+  , _turn       = 0
   }
 
 --------------------------------------------------------------------------------
-newtype Action a = Action ((a -> State -> Script) -> State -> Script)
+newtype Action a = Action (forall r. (a -> State -> Script r) ->
+                                           State -> Script r)
 
 choose :: String -> Count -> Int -> [Card] -> Action [Card]
 choose msg c n cs = Action \k -> case c of
                                    Exactly
                                      | n >= length cs -> k cs
-                                   _ -> \s -> Choose msg c n cs \sel -> k sel s
+                                   _ -> \s -> Choose s msg c n cs \sel ->
+                                               k sel s
 
 get :: Field a -> Action a
 get f = Action \k -> \s -> k (getField f s) s
@@ -108,8 +122,8 @@ set f a = Action \k -> k () . setField f a
 update :: Field a -> (a -> a) -> Action ()
 update x f = set x . f =<< get x
 
-doAction :: Action () -> State -> Script
-doAction (Action m) = m \_ -> Done
+doAction :: Action a -> State -> Script a
+doAction (Action m) = m Done
 
 
 instance Functor Action where
@@ -126,8 +140,8 @@ instance Monad Action where
 --------------------------------------------------------------------------------
 -- Script
 
-data Script = Choose String Count Int [Card] ([Card] -> Script)
-            | Done State
+data Script a = Choose State String Count Int [Card] ([Card] -> Script a)
+              | Done a State
 
 data Count  = UpTo | Exactly
 --------------------------------------------------------------------------------
@@ -187,7 +201,13 @@ enemyAttrs = Field { getField = _enemyAttrs
 getEnemies :: Action [Enemy]
 getEnemies = Map.keys <$> get enemiesF
 
+enemies :: State -> [Enemy]
+enemies = Map.keys . _enemies
 
+turn :: Field Int
+turn = Field { getField = _turn
+             , setField = \x s -> s { _turn = x }
+             }
 
 --------------------------------------------------------------------------------
 
@@ -195,6 +215,11 @@ events :: Field (Map Card CardEvents)
 events = Field { getField = _cardEvents
                , setField = \m s -> s { _cardEvents = m }
                }
+
+doEvent1 :: Card -> (CardEvents -> p -> Action a) -> p -> Action a
+doEvent1 c e p =
+  do es <- get events
+     e (es Map.! c) p
 
 doEvent :: Card -> (CardEvents -> Action a) -> Action a
 doEvent c e =
@@ -233,6 +258,9 @@ removeFrom p n =
        Just (a,ys) -> set p ys *> pure (Just a)
        Nothing     -> pure Nothing
 
+removeCardFrom :: Pile -> Card -> Action ()
+removeCardFrom p c = update p (delete c)
+
 -- | Add a card to a gie pile.
 -- Assumes the card is not in any other pile.
 addTo :: Pile -> Card -> Action ()
@@ -253,6 +281,32 @@ addToDrawRandom c =
      set theDrawPile (insertAt n c cs)
 --------------------------------------------------------------------------------
 
+instance PP State where
+  pp s@State { .. } =
+    vcat [ "=== Turn" <+> int _turn <+> "==="
+         , "Enemies:"
+         , nest 2 (numbered (map pp (Map.elems _enemies)))
+         , "Player:"
+         , nest 2 (pp _player)
+         , hsep [ "Piles:"
+                , ppPile "draw" _drawPile
+                , ppPile "discard" _discarded
+                , ppPile "exhausted" _exhausted
+                ]
+        , "Hand:"
+        , nest 2 (numbered (map (ppCard s) _hand))
+        ]
+    where
+    ppPile x ys = x <.> colon <+> pp (length ys)
+
+ppCard :: State -> Card -> Doc
+ppCard s c = case Map.lookup c (_cardEvents s) of
+               Just ca -> text (cardName ca)
+               Nothing -> "?"
+
+instance PP EnemyState where
+  pp EnemyState { .. } =
+    text _enemyName $$ nest 2 (pp _enemyAttrs)
 
 
 --------------------------------------------------------------------------------

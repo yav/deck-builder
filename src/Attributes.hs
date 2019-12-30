@@ -14,6 +14,8 @@ import Data.Map(Map)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
+import PP
+
 newtype Attributes = Attrs (Map Attribute Int)
 
 
@@ -69,5 +71,14 @@ updAttr a x d =
   in if newVal == 0 && removeAtZero a
        then Nothing
        else Just newVal
+
+--------------------------------------------------------------------------------
+
+instance PP Attribute where
+  pp = text . show
+
+instance PP Attributes where
+  pp (Attrs xs) = vcat (map ppV (Map.toList xs))
+    where ppV (a,v) = pp a <.> colon <+> pp v
 
 

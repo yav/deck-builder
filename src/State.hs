@@ -1,5 +1,5 @@
 module State
-  ( Action, Card, Enemy, turn
+  ( Action, Card, Enemy
 
   -- * The State
   , doAction
@@ -9,14 +9,18 @@ module State
   -- * Fields
   , Field, get, set, update
 
+  -- * Randomness
+  , random
+
+  -- * Statistics
+  , turn
+
   -- * Piles
   , Pile
   , theDrawPile, theDiscarded, theExhausted, theHand
   , removeFrom, addTo, addToDrawBottom, addToDrawRandom
   , removeCardFrom
 
-  -- * Randomness
-  , random
 
   -- * Interaction
   , choose, Count(..)
@@ -50,20 +54,28 @@ import Field
 import Attributes as A
 import PP
 
-type Card = Int
-type Enemy = Int
+newtype Card = Card Int
+                  deriving (Show,Eq,Ord)
+
+newtype Enemy = Enemy Int
+                  deriving (Show,Eq,Ord)
 
 data State = State
   { _drawPile    :: [Card]
   , _hand        :: [Card]
   , _discarded   :: [Card]
   , _exhausted   :: [Card]
+
   , _rng         :: RNG
+
   , _cardEvents  :: Map Card CardEvents
-  , _nextCard    :: Card
+
   , _player      :: Attributes
   , _enemies     :: Map Enemy EnemyState
+
+  , _nextCard    :: Card
   , _nextEnemy   :: Int
+
   , _turn        :: Int
   }
 
@@ -95,7 +107,7 @@ newState r = State
   , _exhausted  = []
   , _rng        = r
   , _cardEvents = Map.empty
-  , _nextCard   = 0
+  , _nextCard   = Card 0
   , _nextEnemy  = 0
   , _player     = noAttributes
   , _enemies    = Map.empty
@@ -106,12 +118,11 @@ newState r = State
 newtype Action a = Action (forall r. (a -> State -> Script r) ->
                                            State -> Script r)
 
-choose :: String -> Count -> Int -> [Card] -> Action [Card]
-choose msg c n cs = Action \k -> case c of
-                                   Exactly
-                                     | n >= length cs -> k cs
-                                   _ -> \s -> Choose s msg c n cs \sel ->
-                                               k sel s
+choose :: String -> Count -> [Card] -> Action [Card]
+choose msg c cs = Action \k -> case c of
+                                 Exactly n
+                                   | n >= length cs -> k cs
+                                 _ -> \s -> Choose s msg c cs \sel -> k sel s
 
 get :: Field a -> Action a
 get f = Action \k -> \s -> k (getField f s) s
@@ -140,10 +151,10 @@ instance Monad Action where
 --------------------------------------------------------------------------------
 -- Script
 
-data Script a = Choose State String Count Int [Card] ([Card] -> Script a)
+data Script a = Choose State String Count [Card] ([Card] -> Script a)
               | Done a State
 
-data Count  = UpTo | Exactly
+data Count  = UpTo Int | Exactly Int
 --------------------------------------------------------------------------------
 
 
@@ -228,9 +239,9 @@ doEvent c e =
 
 newCard :: (Card -> CardEvents) -> Action Card
 newCard es =
-  do c <- get nextCard
+  do c@(Card n) <- get nextCard
      update events (Map.insert c (es c))
-     set nextCard (c + 1)
+     set nextCard (Card (n + 1))
      pure c
 
 

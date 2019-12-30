@@ -14,7 +14,8 @@ import Cards
 
 main :: IO ()
 main =
-  do rng <- newRNG
+  do hSetBuffering stdout NoBuffering
+     rng <- newRNG
      s0  <- runAction_ newGame (newState rng)
      play s0
 
@@ -22,11 +23,13 @@ main =
 newGame :: Action ()
 newGame =
   do forM_ [ 1 .. 12 ] \i -> addTo theDiscarded =<< newCard (noOp i)
+     update player (updateAttribute Health 60)
      startPlayerTurn
 
 play :: State -> IO ()
 play s =
-  do print (pp s)
+  do putStrLn ""
+     print (pp s)
      putStr "> "
      cmd <- getLine
      case words cmd of
@@ -54,8 +57,8 @@ runScript :: Script a -> IO (a,State)
 runScript scr =
   case scr of
     Done a s1 -> pure (a,s1)
-    Choose s msg cnt n cs k ->
-      do ds <- getInp s msg cnt n cs
+    Choose s msg cnt cs k ->
+      do ds <- getInp s msg cnt cs
          runScript (k ds)
 
 parseChoice :: [a] -> String -> Maybe a
@@ -68,25 +71,24 @@ parseChoice cs txt =
 
 
 
-getInp :: State -> String -> Count -> Int -> [Card] -> IO [Card]
-getInp s msg cnt n cs = go
+getInp :: State -> String -> Count -> [Card] -> IO [Card]
+getInp s msg cnt cs = go
   where
   go = do print (text msg $$ nest 2 (numbered (map (ppCard s) cs)))
           putStr "> "
-          hFlush stdout
           txt <- getLine
           case mapM (parseChoice cs) (words txt) of
             Just chosen ->
               do let l = length chosen
                  case cnt of
-                   UpTo
+                   UpTo n
                      | l <= n -> pure chosen
                      | otherwise ->
                        do putStrLn ("You can choose no more than "
                                                 ++ show n ++ " cards.")
                           go
 
-                   Exactly
+                   Exactly n
                      | l == n -> pure chosen
                      | otherwise ->
                        do putStrLn ("You must choose exactly "

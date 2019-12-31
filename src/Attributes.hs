@@ -5,6 +5,7 @@ module Attributes
   , hasAttribute
   , getAttribute
   , updateAttribute
+  , reduceNonNeg
   , removeAttribute
   , attrEndOfRound
   ) where
@@ -20,6 +21,7 @@ newtype Attributes = Attrs (Map Attribute Int)
 
 
 data Attribute = Health | Block | Vulnerable
+               | Dead
   deriving (Show,Eq,Ord)
 
 
@@ -55,6 +57,14 @@ getAttribute a (Attrs mp) = Map.findWithDefault 0 a mp
 updateAttribute :: Attribute -> Int -> Attributes -> Attributes
 updateAttribute a n (Attrs mp) = Attrs (Map.alter upd a mp)
   where upd mb = updAttr a (fromMaybe 0 mb) n
+
+reduceNonNeg :: Attribute -> Int -> Attributes -> (Int,Attributes)
+reduceNonNeg a i as =
+  let as1  = updateAttribute a (negate i) as
+      newV = getAttribute a as1
+  in if newV < 0
+        then (i+newV, updateAttribute a (negate newV) as1)
+        else (i,as1)
 
 -- | Remove the given attribute.
 removeAttribute :: Attribute -> Attributes -> Attributes

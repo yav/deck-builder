@@ -14,10 +14,10 @@ outer ~> inner = Field { getField = getField inner . getField outer
                                             in setField outer a1 s
                        }
 
+
 mapField :: Ord a => a -> FieldOf (Map a b) b
 mapField k = Field { getField = \s   -> s Map.! k
                    , setField = \x s -> Map.insert k x s
                    }
-
 
 

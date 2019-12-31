@@ -1,5 +1,5 @@
 module State
-  ( Action, Card, Enemy
+  ( Action, Card, Entity
 
   -- * The State
   , doAction
@@ -29,15 +29,17 @@ module State
   , CardEvents(..)
   , doEvent, doEvent1
   , newCard
-  , CardTaget(..)
 
   -- * Entities
-  , player, getEnemies, enemy, enemyAttrs
+  , player, getEnemies, entity, entityAttrs
   , enemies
-  , newEnemy
-  , EnemyState(..)
+  , newEntity
+  , EntityState(..)
+
+  -- * AI
+  , theAI
   , EnemyActions(..)
-  , doEnemyAction
+  , intention
 
   -- * Attributes
   , Attribute(..)
@@ -60,8 +62,14 @@ import PP
 newtype Card = Card Int
                   deriving (Show,Eq,Ord)
 
-newtype Enemy = Enemy Int
+newtype Entity = Entity Int
                   deriving (Show,Eq,Ord)
+
+
+player :: Entity
+player = Entity 0
+
+
 
 data State = State
   { _drawPile    :: [Card]
@@ -75,40 +83,43 @@ data State = State
 
   , _cardEvents  :: Map Card CardEvents
 
-  , _player      :: Attributes
-  , _enemies     :: Map Enemy EnemyState
+  , _player      :: EntityState
+
+
+  , _enemies     :: Map Entity EntityState
+  , _intentions  :: Map Entity String -- XXX: a datatype?
+  , _enemyAI     :: EnemyActions
 
   , _nextCard    :: Card
-  , _nextEnemy   :: Enemy
+  , _nextEntity  :: Entity
 
   , _turn        :: Int
   }
 
 
-data EnemyState = EnemyState
-  { _enemyAttrs   :: Attributes
-  , _enemyName    :: String
-  , _enemyId      :: Enemy
-  , _enemyAction  :: EnemyActions
+data EntityState = EntityState
+  { _entityAttrs   :: Attributes
+  , _entityName    :: String
+  , _entityId      :: Entity
   }
 
 newtype EnemyActions = EnemyTurn (Action EnemyActions)
 
 
-data CardTaget = NoTaget | Target Enemy
 
 data CardEvents = CardEvents
   { atEndOfTurn     :: Action ()
-  , whenPlay        :: CardTaget -> Action ()
+  , whenPlay        :: Entity -> Action ()
   , afterPlay       :: Action ()
   , whenDrawn       :: Action ()
   , whenExhausted   :: Action ()
   , whenRetained    :: Action ()
   , whenDiscarded   :: Action ()
-  , isPlayable      :: CardTaget -> Action Bool
+  , isPlayable      :: Entity -> Action Bool
   , self            :: Card
   , cardName        :: String
   }
+
 
 newState :: RNG -> State
 newState r =
@@ -116,25 +127,31 @@ newState r =
   do viewRNG <- randRNG
      pure \newR ->
         State
-          { _drawPile   = []
-          , _hand       = []
-          , _discarded  = []
-          , _exhausted  = []
-          , _rng        = newR
-          , _viewRNG    = viewRNG
-          , _cardEvents = Map.empty
-          , _nextCard   = Card 0
-          , _nextEnemy  = Enemy 0
-          , _player     = noAttributes
-          , _enemies    = Map.empty
-          , _turn       = 0
+          { _drawPile     = []
+          , _hand         = []
+          , _discarded    = []
+          , _exhausted    = []
+          , _rng          = newR
+          , _viewRNG      = viewRNG
+          , _cardEvents   = Map.empty
+          , _nextCard     = Card 0
+          , _nextEntity   = Entity 1
+          , _player       = EntityState
+                              { _entityAttrs  = noAttributes
+                              , _entityName   = "Player"
+                              , _entityId     = player
+                              }
+          , _enemyAI      = noActions
+          , _enemies      = Map.empty
+          , _intentions   = Map.empty
+          , _turn         = 0
           }
+  where
+  noActions = EnemyTurn (pure noActions)
 
 --------------------------------------------------------------------------------
--- newtype Action a = Action (forall r. (a -> Result r) -> Result r)
-newtype Action a = Action (forall r. (a -> State -> Script r) -> State -> Script r)
-
-type Result r = State -> Script r
+newtype Action a = Action (forall r. (a -> Result r) -> Result r)
+type Result r    = State -> Script r
 
 
 
@@ -167,8 +184,6 @@ instance Applicative Action where
 
 instance Monad Action where
   Action m >>= f = Action \k -> m \a -> let Action m1 = f a in m1 k
-  -- Action a
-  -- (a -> Action b)
 
 
 --------------------------------------------------------------------------------
@@ -214,30 +229,33 @@ nextCard = Field { getField = _nextCard
                  , setField = \x s -> s { _nextCard = x }
                  }
 
-nextEnemy :: Field Enemy
-nextEnemy = Field { getField = _nextEnemy
-                  , setField = \x s -> s { _nextEnemy = x }
-                  }
+nextEntity :: Field Entity
+nextEntity = Field { getField = _nextEntity
+                   , setField = \x s -> s { _nextEntity = x }
+                   }
 
-player :: Field Attributes
-player = Field { getField = _player
-               , setField = \x s -> s { _player = x }
-               }
 
-enemy :: Enemy -> Field EnemyState
-enemy e = enemiesF ~> mapField e
+entity :: Entity -> Field EntityState
+entity e = if e == player
+            then playerF
+            else enemiesF ~> mapField e
 
-enemiesF :: Field (Map Enemy EnemyState)
+playerF :: Field EntityState
+playerF = Field { getField = _player
+                , setField = \x s -> s { _player = x }
+                }
+
+enemiesF :: Field (Map Entity EntityState)
 enemiesF = Field { getField = _enemies
                  , setField = \x s -> s { _enemies = x }
                  }
 
-enemyAttrs :: FieldOf EnemyState Attributes
-enemyAttrs = Field { getField = _enemyAttrs
-                   , setField = \x s -> s { _enemyAttrs = x }
-                   }
+entityAttrs :: FieldOf EntityState Attributes
+entityAttrs = Field { getField = _entityAttrs
+                    , setField = \x s -> s { _entityAttrs = x }
+                    }
 
-getEnemies :: Action [Enemy]
+getEnemies :: Action [Entity]
 getEnemies = Map.keys <$> get enemiesF
 
 
@@ -246,26 +264,29 @@ turn = Field { getField = _turn
              , setField = \x s -> s { _turn = x }
              }
 
+theAI :: Field EnemyActions
+theAI = Field { getField = _enemyAI
+              , setField = \x s -> s { _enemyAI = x }
+              }
+
+intention :: Entity -> Field String
+intention e =
+  Field { getField = Map.findWithDefault "???" e . _intentions
+        , setField = \x s -> s { _intentions = Map.insert e x (_intentions s) }
+        }
 
 --------------------------------------------------------------------------------
-newEnemy :: (Enemy -> EnemyState) -> Action Enemy
-newEnemy mk =
-  do e@(Enemy n) <- get nextEnemy
+newEntity :: (Entity -> EntityState) -> Action Entity
+newEntity mk =
+  do e@(Entity n) <- get nextEntity
      update enemiesF (Map.insert e (mk e))
-     set nextEnemy (Enemy (n + 1))
+     set nextEntity (Entity (n + 1))
      pure e
 
 
-enemies :: State -> [Enemy]
+enemies :: State -> [Entity]
 enemies = Map.keys . _enemies
 
-
-doEnemyAction :: Enemy -> Action ()
-doEnemyAction e =
-  do es <- get (enemy e)
-     let EnemyTurn m = _enemyAction es
-     next <- m
-     update (enemy e) \es1 -> es1 { _enemyAction = next }
 
 --------------------------------------------------------------------------------
 
@@ -351,7 +372,7 @@ instance PP State where
   pp s@State { .. } =
     vcat [ "=== Turn" <+> int _turn <+> "==="
          , "Enemies:"
-         , nest 2 (numbered (map pp (Map.elems _enemies)))
+         , nest 2 (numbered (map ppEnemy (Map.toList _enemies)))
          , "Player:"
          , nest 2 (pp _player)
          , hsep [ "Piles:"
@@ -364,15 +385,17 @@ instance PP State where
         ]
     where
     ppPile x ys = x <.> colon <+> pp (length ys)
+    ppEnemy (e,es) = let intent = getField (intention e) s
+                     in pp es <+> brackets (text intent)
 
 ppCard :: State -> Card -> Doc
 ppCard s c = case Map.lookup c (_cardEvents s) of
                Just ca -> text (cardName ca)
                Nothing -> "?"
 
-instance PP EnemyState where
-  pp EnemyState { .. } =
-    text _enemyName $$ nest 2 (pp _enemyAttrs)
+instance PP EntityState where
+  pp EntityState { .. } =
+    text _entityName $$ nest 2 (pp _entityAttrs)
 
 
 --------------------------------------------------------------------------------

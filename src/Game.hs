@@ -17,8 +17,14 @@ reshuffle :: Action ()
 reshuffle =
   do draw    <- get theDrawPile
      discard <- get theDiscarded
-     set theDrawPile =<< random (shuffle (draw ++ discard))
      set theDiscarded []
+     set theDrawPile (draw ++ discard)
+     shuffleDraw
+
+shuffleDraw :: Action ()
+shuffleDraw =
+  do draw <- get theDrawPile
+     set theDrawPile =<< random (shuffle draw)
 
 -- | Move the top card of the draw deck (if any) to the hand.
 -- Reshuffles the discard pile, if neccessary.
@@ -34,12 +40,12 @@ drawCard =
 
 endOfRound :: Action ()
 endOfRound =
-  do updAttrs player
+  do updAttrs (entity player ~> entityAttrs)
      es <- getEnemies
-     forM_ es \e -> updAttrs (enemy e ~> enemyAttrs)
+     forM_ es \e -> updAttrs (entity e ~> entityAttrs)
   where
   updAttrs f =
-    do update f (removeAttribute Block)
+    do update f (removeAttribute Block)   -- XXX: this should happen at the *start* of the turn
        update f attrEndOfRound
 
 
@@ -49,7 +55,11 @@ startPlayerTurn =
      replicateM_ 5 drawCard
 
 enemyTurn :: Action ()
-enemyTurn = mapM_ doEnemyAction =<< getEnemies
+enemyTurn =
+  do EnemyTurn m <- get theAI
+     set theAI =<< m
+
+
 
 --------------------------------------------------------------------------------
 exhaustCard :: Card -> Action ()
@@ -84,31 +94,54 @@ viewDrawPile =
 --------------------------------------------------------------------------------
 
 
-targetDied :: Target -> Action ()
-targetDied _ = pure () -- XXX
+targetDied :: Entity -> Action ()
+targetDied e =
+  update (entity e ~> entityAttrs) (updateAttribute Dead 1)
 
 
-reduceHP :: Target -> Int -> Action Int
+actualAttackAmount :: Entity -> Entity -> Int -> Action Int
+actualAttackAmount src tgt amt =
+  do _sas <- get (entity src ~> entityAttrs)
+     tas  <- get (entity tgt ~> entityAttrs)
+     if getAttribute Vulnerable tas > 0
+        then pure (div (3 * amt) 2)
+        else pure amt
+
+
+attack :: Entity -> Entity -> Int -> Action Int
+attack src tgt amt =
+  do let who = entity tgt ~> entityAttrs
+     as <- get who
+     if getAttribute Health as == 0
+        then pure 0
+        else doDamage tgt =<< actualAttackAmount src tgt amt
+
+doDamage :: Entity -> Int -> Action Int
+doDamage tgt amt =
+  do let who = entity tgt ~> entityAttrs
+     as <- get who
+     let (blocked,as1) = reduceNonNeg Block amt as
+     set who as1
+
+     let unblocked = amt - blocked
+     if unblocked > 0
+        then reduceHP tgt unblocked
+        else pure 0
+
+
+reduceHP :: Entity -> Int -> Action Int
 reduceHP tgt n =
-  do as <- get who
-     if hasAttribute Health as
-       then do let hp    = getAttribute Health
-                   newHP = max 0 (hp - n)
-                   diff  = hp - newHP
-               set who (updateAttribute Health (negate diff))
-               when (newHP == 0) (targetDied tgt)
-               pure diff
-       else pure 0
-  where
-  who = case tgt of
-         NoTaget  -> player
-         Target e -> enemy e
-
+  do let who = entity tgt ~> entityAttrs
+     as <- get who
+     let (amt,as1) = reduceNonNeg Health n as
+     set who as1
+     when (getAttribute Health as1 == 0) (targetDied tgt)
+     pure amt
 
 
 
 --------------------------------------------------------------------------------
-playCardFromHand :: Card -> CardTaget -> Action ()
+playCardFromHand :: Card -> Entity -> Action ()
 playCardFromHand c tgt =
   do yes <- doEvent1 c isPlayable tgt
      when yes

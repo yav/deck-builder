@@ -23,11 +23,15 @@ main =
 
 newGame :: Action ()
 newGame =
-  do forM_ [ 1 .. 12 :: Int ] \i -> addTo theDiscarded =<< newCard (noOp i)
-     forM_ [ 1 .. 12 :: Int ] \_ -> addTo theDiscarded =<< newCard seek
-     update player (updateAttribute Health 60)
+  do let addCard x = addTo theDrawPile =<< newCard x
+     replicateM_ 5 (addCard strike)
+     replicateM_ 5 (addCard defend)
+     addCard seek
+     shuffleDraw
 
-     _e <- newEnemy boss
+     update (entity player ~> entityAttrs) (updateAttribute Health 60)
+
+     set theAI =<< testAI =<< newEntity boss
 
      startPlayerTurn
 
@@ -41,9 +45,9 @@ play s =
        ["e"] -> play =<< runAction_ endPlayerTurn s
        w : more | Just c <- parseChoice (getField theHand s) w ->
          case more of
-           [] -> play =<< runAction_ (playCardFromHand c NoTaget) s
+           [] -> play =<< runAction_ (playCardFromHand c player) s
            [we] | Just e <- parseChoice (enemies s) we ->
-                 play =<< runAction_ (playCardFromHand c (Target e)) s
+                 play =<< runAction_ (playCardFromHand c e) s
            _ -> again
        _ -> again
 

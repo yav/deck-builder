@@ -29,7 +29,7 @@ drawCard =
   drawOr k =
     do mb <- removeFrom theDrawPile 0
        case mb of
-          Just c  -> addTo theHand c
+          Just c  -> cardDrawn c
           Nothing -> k
 
 endOfRound :: Action ()
@@ -49,7 +49,7 @@ startPlayerTurn =
      replicateM_ 5 drawCard
 
 enemyTurn :: Action ()
-enemyTurn = pure () --- XXX
+enemyTurn = mapM_ doEnemyAction =<< getEnemies
 
 --------------------------------------------------------------------------------
 exhaustCard :: Card -> Action ()
@@ -69,14 +69,45 @@ discardCard c =
      addTo theDiscarded c
 
 
+-- | Assumes card is not in any pile
+cardDrawn :: Card -> Action ()
+cardDrawn c =
+  do doEvent c whenDrawn
+     addTo theHand c
+
+
+viewDrawPile :: Action [Card]
+viewDrawPile =
+  do cs <- get theDrawPile
+     randomView (shuffle cs)
+
+--------------------------------------------------------------------------------
+
+
+targetDied :: Target -> Action ()
+targetDied _ = pure () -- XXX
+
+
+reduceHP :: Target -> Int -> Action Int
+reduceHP tgt n =
+  do as <- get who
+     if hasAttribute Health as
+       then do let hp    = getAttribute Health
+                   newHP = max 0 (hp - n)
+                   diff  = hp - newHP
+               set who (updateAttribute Health (negate diff))
+               when (newHP == 0) (targetDied tgt)
+               pure diff
+       else pure 0
+  where
+  who = case tgt of
+         NoTaget  -> player
+         Target e -> enemy e
 
 
 
 
 --------------------------------------------------------------------------------
-
-
-
 playCardFromHand :: Card -> CardTaget -> Action ()
 playCardFromHand c tgt =
   do yes <- doEvent1 c isPlayable tgt

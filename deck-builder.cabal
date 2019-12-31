@@ -12,7 +12,7 @@ cabal-version:       >=1.10
 
 executable deck
   other-modules:       State, Game,
-                       Cards, Attributes,
+                       Cards, Attributes, Enemies,
                        PP, RNG, Field
 
   build-depends:       base                 >=4.8,

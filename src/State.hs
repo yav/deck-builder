@@ -10,7 +10,7 @@ module State
   , Field, get, set, update
 
   -- * Randomness
-  , random
+  , random, randomView
 
   -- * Statistics
   , turn
@@ -34,7 +34,10 @@ module State
   -- * Entities
   , player, getEnemies, enemy, enemyAttrs
   , enemies
-  , EnemyState
+  , newEnemy
+  , EnemyState(..)
+  , EnemyActions(..)
+  , doEnemyAction
 
   -- * Attributes
   , Attribute(..)
@@ -67,6 +70,8 @@ data State = State
   , _exhausted   :: [Card]
 
   , _rng         :: RNG
+  , _viewRNG     :: RNG -- used for viewing stuff, does not affect
+                        -- game state
 
   , _cardEvents  :: Map Card CardEvents
 
@@ -74,16 +79,21 @@ data State = State
   , _enemies     :: Map Enemy EnemyState
 
   , _nextCard    :: Card
-  , _nextEnemy   :: Int
+  , _nextEnemy   :: Enemy
 
   , _turn        :: Int
   }
 
 
 data EnemyState = EnemyState
-  { _enemyAttrs :: Attributes
-  , _enemyName  :: String
+  { _enemyAttrs   :: Attributes
+  , _enemyName    :: String
+  , _enemyId      :: Enemy
+  , _enemyAction  :: EnemyActions
   }
+
+newtype EnemyActions = EnemyTurn (Action EnemyActions)
+
 
 data CardTaget = NoTaget | Target Enemy
 
@@ -91,6 +101,7 @@ data CardEvents = CardEvents
   { atEndOfTurn     :: Action ()
   , whenPlay        :: CardTaget -> Action ()
   , afterPlay       :: Action ()
+  , whenDrawn       :: Action ()
   , whenExhausted   :: Action ()
   , whenRetained    :: Action ()
   , whenDiscarded   :: Action ()
@@ -100,23 +111,32 @@ data CardEvents = CardEvents
   }
 
 newState :: RNG -> State
-newState r = State
-  { _drawPile   = []
-  , _hand       = []
-  , _discarded  = []
-  , _exhausted  = []
-  , _rng        = r
-  , _cardEvents = Map.empty
-  , _nextCard   = Card 0
-  , _nextEnemy  = 0
-  , _player     = noAttributes
-  , _enemies    = Map.empty
-  , _turn       = 0
-  }
+newState r =
+  withRNG r
+  do viewRNG <- randRNG
+     pure \newR ->
+        State
+          { _drawPile   = []
+          , _hand       = []
+          , _discarded  = []
+          , _exhausted  = []
+          , _rng        = newR
+          , _viewRNG    = viewRNG
+          , _cardEvents = Map.empty
+          , _nextCard   = Card 0
+          , _nextEnemy  = Enemy 0
+          , _player     = noAttributes
+          , _enemies    = Map.empty
+          , _turn       = 0
+          }
 
 --------------------------------------------------------------------------------
-newtype Action a = Action (forall r. (a -> State -> Script r) ->
-                                           State -> Script r)
+-- newtype Action a = Action (forall r. (a -> Result r) -> Result r)
+newtype Action a = Action (forall r. (a -> State -> Script r) -> State -> Script r)
+
+type Result r = State -> Script r
+
+
 
 choose :: String -> Count -> [Card] -> Action [Card]
 choose msg c cs = Action \k -> case c of
@@ -137,6 +157,7 @@ doAction :: Action a -> State -> Script a
 doAction (Action m) = m Done
 
 
+
 instance Functor Action where
   fmap = liftM
 
@@ -146,6 +167,8 @@ instance Applicative Action where
 
 instance Monad Action where
   Action m >>= f = Action \k -> m \a -> let Action m1 = f a in m1 k
+  -- Action a
+  -- (a -> Action b)
 
 
 --------------------------------------------------------------------------------
@@ -191,6 +214,11 @@ nextCard = Field { getField = _nextCard
                  , setField = \x s -> s { _nextCard = x }
                  }
 
+nextEnemy :: Field Enemy
+nextEnemy = Field { getField = _nextEnemy
+                  , setField = \x s -> s { _nextEnemy = x }
+                  }
+
 player :: Field Attributes
 player = Field { getField = _player
                , setField = \x s -> s { _player = x }
@@ -212,13 +240,32 @@ enemyAttrs = Field { getField = _enemyAttrs
 getEnemies :: Action [Enemy]
 getEnemies = Map.keys <$> get enemiesF
 
-enemies :: State -> [Enemy]
-enemies = Map.keys . _enemies
 
 turn :: Field Int
 turn = Field { getField = _turn
              , setField = \x s -> s { _turn = x }
              }
+
+
+--------------------------------------------------------------------------------
+newEnemy :: (Enemy -> EnemyState) -> Action Enemy
+newEnemy mk =
+  do e@(Enemy n) <- get nextEnemy
+     update enemiesF (Map.insert e (mk e))
+     set nextEnemy (Enemy (n + 1))
+     pure e
+
+
+enemies :: State -> [Enemy]
+enemies = Map.keys . _enemies
+
+
+doEnemyAction :: Enemy -> Action ()
+doEnemyAction e =
+  do es <- get (enemy e)
+     let EnemyTurn m = _enemyAction es
+     next <- m
+     update (enemy e) \es1 -> es1 { _enemyAction = next }
 
 --------------------------------------------------------------------------------
 
@@ -248,17 +295,25 @@ newCard es =
 
 --------------------------------------------------------------------------------
 
--- | Do something with randomness.
-random :: Gen a -> Action a
-random m =
+randomWith :: Field RNG -> Gen a -> Action a
+randomWith rng m =
   do r0 <- get rng
      let (a,r) = withRNG r0 ((,) <$> m)
      set rng r
      pure a
-  where
-  rng = Field { getField = _rng
-              , setField = \a s -> s { _rng = a }
-              }
+
+
+-- | Do something with randomness.
+random :: Gen a -> Action a
+random = randomWith Field { getField = _rng
+                          , setField = \a s -> s { _rng = a }
+                          }
+
+randomView :: Gen a -> Action a
+randomView = randomWith Field { getField = _viewRNG
+                              , setField = \a s -> s { _viewRNG = a }
+                              }
+
 
 
 -- | Remove the card at a specific location in a pile.

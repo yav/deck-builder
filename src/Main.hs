@@ -10,6 +10,7 @@ import Field
 import State
 import Game
 import Cards
+import Enemies
 
 
 main :: IO ()
@@ -22,8 +23,12 @@ main =
 
 newGame :: Action ()
 newGame =
-  do forM_ [ 1 .. 12 ] \i -> addTo theDiscarded =<< newCard (noOp i)
+  do forM_ [ 1 .. 12 :: Int ] \i -> addTo theDiscarded =<< newCard (noOp i)
+     forM_ [ 1 .. 12 :: Int ] \_ -> addTo theDiscarded =<< newCard seek
      update player (updateAttribute Health 60)
+
+     _e <- newEnemy boss
+
      startPlayerTurn
 
 play :: State -> IO ()

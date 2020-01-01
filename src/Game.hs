@@ -40,23 +40,25 @@ drawCard =
 
 endOfRound :: Action ()
 endOfRound =
-  do updAttrs (entity player ~> entityAttrs)
+  do update (entity player ~> entityAttrs) attrEndOfRound
      es <- getEnemies
-     forM_ es \e -> updAttrs (entity e ~> entityAttrs)
-  where
-  updAttrs f =
-    do update f (removeAttribute Block)   -- XXX: this should happen at the *start* of the turn
-       update f attrEndOfRound
+     forM_ es \e -> update (entity e ~> entityAttrs) attrEndOfRound
 
+entityStartTurn :: Entity -> Action ()
+entityStartTurn e =
+  update (entity e ~> entityAttrs) (removeAttribute Block)
 
 startPlayerTurn :: Action ()
 startPlayerTurn =
   do update turn (+1)
+     entityStartTurn player
      replicateM_ 5 drawCard
 
 enemyTurn :: Action ()
 enemyTurn =
-  do EnemyTurn m <- get theAI
+  do es <- getEnemies
+     forM_ es entityStartTurn
+     EnemyTurn m <- get theAI
      set theAI =<< m
 
 

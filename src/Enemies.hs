@@ -34,7 +34,7 @@ testAI self = spawn
   where
   spawn =
     do set (intention self) "Spawn Minion"
-       pure $ EnemyTurn $ do m <- newEntity basicEntity
+       pure $ EnemyTurn $ do m <- newEnemy basicEntity
                              multiAI [ minion m, damagePlayer m ]
 
   damagePlayer m =

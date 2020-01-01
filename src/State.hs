@@ -33,7 +33,7 @@ module State
   -- * Entities
   , player, getEnemies, entity, entityAttrs
   , enemies
-  , newEntity
+  , newEnemy
   , EntityState(..)
 
   -- * AI
@@ -85,8 +85,9 @@ data State = State
 
   , _player      :: EntityState
 
+  , _enemyState  :: Map Entity EntityState
+  , _enemies     :: [Entity]
 
-  , _enemies     :: Map Entity EntityState
   , _intentions  :: Map Entity String -- XXX: a datatype?
   , _enemyAI     :: EnemyActions
 
@@ -121,6 +122,8 @@ data CardEvents = CardEvents
   }
 
 
+
+
 newState :: RNG -> State
 newState r =
   withRNG r
@@ -142,7 +145,8 @@ newState r =
                               , _entityId     = player
                               }
           , _enemyAI      = noActions
-          , _enemies      = Map.empty
+          , _enemyState   = Map.empty
+          , _enemies      = []
           , _intentions   = Map.empty
           , _turn         = 0
           }
@@ -246,8 +250,8 @@ playerF = Field { getField = _player
                 }
 
 enemiesF :: Field (Map Entity EntityState)
-enemiesF = Field { getField = _enemies
-                 , setField = \x s -> s { _enemies = x }
+enemiesF = Field { getField = _enemyState
+                 , setField = \x s -> s { _enemyState = x }
                  }
 
 entityAttrs :: FieldOf EntityState Attributes
@@ -276,16 +280,18 @@ intention e =
         }
 
 --------------------------------------------------------------------------------
-newEntity :: (Entity -> EntityState) -> Action Entity
-newEntity mk =
+newEnemy :: (Entity -> EntityState) -> Action Entity
+newEnemy mk =
   do e@(Entity n) <- get nextEntity
      update enemiesF (Map.insert e (mk e))
      set nextEntity (Entity (n + 1))
      pure e
 
 
-enemies :: State -> [Entity]
-enemies = Map.keys . _enemies
+enemies :: Field [Entity]
+enemies = Field { getField = _enemies
+                , setField = \x s -> s { _enemies = x }
+                }
 
 
 --------------------------------------------------------------------------------
@@ -372,7 +378,7 @@ instance PP State where
   pp s@State { .. } =
     vcat [ "=== Turn" <+> int _turn <+> "==="
          , "Enemies:"
-         , nest 2 (numbered (map ppEnemy (Map.toList _enemies)))
+         , nest 2 (numbered (map ppEnemy _enemies))
          , "Player:"
          , nest 2 (pp _player)
          , hsep [ "Piles:"
@@ -385,8 +391,9 @@ instance PP State where
         ]
     where
     ppPile x ys = x <.> colon <+> pp (length ys)
-    ppEnemy (e,es) = let intent = getField (intention e) s
-                     in pp es <+> brackets (text intent)
+    ppEnemy e = let intent = getField (intention e) s
+                    es     = getField (entity e) s
+                in pp es <+> brackets (text intent)
 
 ppCard :: State -> Card -> Doc
 ppCard s c = case Map.lookup c (_cardEvents s) of

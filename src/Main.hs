@@ -31,7 +31,7 @@ newGame =
 
      update (entity player ~> entityAttrs) (updateAttribute Health 60)
 
-     set theAI =<< testAI =<< newEntity boss
+     set theAI =<< testAI =<< newEnemy boss
 
      startPlayerTurn
 
@@ -46,7 +46,7 @@ play s =
        w : more | Just c <- parseChoice (getField theHand s) w ->
          case more of
            [] -> play =<< runAction_ (playCardFromHand c player) s
-           [we] | Just e <- parseChoice (enemies s) we ->
+           [we] | Just e <- parseChoice (getField enemies s) we ->
                  play =<< runAction_ (playCardFromHand c e) s
            _ -> again
        _ -> again

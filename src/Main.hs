@@ -30,8 +30,7 @@ newGame =
      shuffleDraw
 
      update (entity player ~> entityAttrs) (updateAttribute Health 60)
-
-     set theAI =<< testAI =<< newEnemy boss
+     _ <- newEnemy boss
 
      startPlayerTurn
 

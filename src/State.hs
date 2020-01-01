@@ -31,15 +31,17 @@ module State
   , newCard
 
   -- * Entities
-  , player, getEnemies, entity, entityAttrs
-  , enemies
-  , newEnemy
+  , player, entity, entityAttrs
   , EntityState(..)
 
-  -- * AI
-  , theAI
+  -- * Enemies
+  , enemies
+  , enemy
+  , newEnemy
+  , removeEnemy
+  , EnemyState(..)
   , EnemyActions(..)
-  , intention
+  , enemyAI
 
   -- * Attributes
   , Attribute(..)
@@ -85,11 +87,8 @@ data State = State
 
   , _player      :: EntityState
 
-  , _enemyState  :: Map Entity EntityState
+  , _enemyState  :: Map Entity EnemyState
   , _enemies     :: [Entity]
-
-  , _intentions  :: Map Entity String -- XXX: a datatype?
-  , _enemyAI     :: EnemyActions
 
   , _nextCard    :: Card
   , _nextEntity  :: Entity
@@ -103,8 +102,6 @@ data EntityState = EntityState
   , _entityName    :: String
   , _entityId      :: Entity
   }
-
-newtype EnemyActions = EnemyTurn (Action EnemyActions)
 
 
 
@@ -144,14 +141,10 @@ newState r =
                               , _entityName   = "Player"
                               , _entityId     = player
                               }
-          , _enemyAI      = noActions
           , _enemyState   = Map.empty
           , _enemies      = []
-          , _intentions   = Map.empty
           , _turn         = 0
           }
-  where
-  noActions = EnemyTurn (pure noActions)
 
 --------------------------------------------------------------------------------
 newtype Action a = Action (forall r. (a -> Result r) -> Result r)
@@ -242,14 +235,17 @@ nextEntity = Field { getField = _nextEntity
 entity :: Entity -> Field EntityState
 entity e = if e == player
             then playerF
-            else enemiesF ~> mapField e
+            else enemy e ~> enemyEntity
+
+enemy :: Entity -> Field EnemyState
+enemy e = enemiesF ~> mapField e
 
 playerF :: Field EntityState
 playerF = Field { getField = _player
                 , setField = \x s -> s { _player = x }
                 }
 
-enemiesF :: Field (Map Entity EntityState)
+enemiesF :: Field (Map Entity EnemyState)
 enemiesF = Field { getField = _enemyState
                  , setField = \x s -> s { _enemyState = x }
                  }
@@ -259,39 +255,48 @@ entityAttrs = Field { getField = _entityAttrs
                     , setField = \x s -> s { _entityAttrs = x }
                     }
 
-getEnemies :: Action [Entity]
-getEnemies = Map.keys <$> get enemiesF
-
-
 turn :: Field Int
 turn = Field { getField = _turn
              , setField = \x s -> s { _turn = x }
              }
 
-theAI :: Field EnemyActions
-theAI = Field { getField = _enemyAI
-              , setField = \x s -> s { _enemyAI = x }
-              }
 
-intention :: Entity -> Field String
-intention e =
-  Field { getField = Map.findWithDefault "???" e . _intentions
-        , setField = \x s -> s { _intentions = Map.insert e x (_intentions s) }
-        }
 
---------------------------------------------------------------------------------
-newEnemy :: (Entity -> EntityState) -> Action Entity
-newEnemy mk =
-  do e@(Entity n) <- get nextEntity
-     update enemiesF (Map.insert e (mk e))
-     set nextEntity (Entity (n + 1))
-     pure e
+data EnemyActions = EnemyTurn String (Action EnemyActions)
+
+data EnemyState = EnemyState
+  { _enemyEnt      :: EntityState
+  , _enemyAI       :: EnemyActions
+  }
+
+enemyEntity :: FieldOf EnemyState EntityState
+enemyEntity = Field { getField = _enemyEnt
+                    , setField = \x s -> s { _enemyEnt = x }
+                    }
+
+
+enemyAI :: FieldOf EnemyState EnemyActions
+enemyAI = Field { getField = _enemyAI
+                , setField = \x s -> s { _enemyAI = x }
+                }
 
 
 enemies :: Field [Entity]
 enemies = Field { getField = _enemies
                 , setField = \x s -> s { _enemies = x }
                 }
+
+newEnemy :: (Entity -> EnemyState) -> Action Entity
+newEnemy mk =
+  do e@(Entity n) <- get nextEntity
+     update enemiesF (Map.insert e (mk e))
+     update enemies  (e :)
+     set nextEntity (Entity (n + 1))
+     pure e
+
+removeEnemy :: Entity -> Action ()
+removeEnemy e = update enemies (delete e)
+
 
 
 --------------------------------------------------------------------------------
@@ -391,9 +396,7 @@ instance PP State where
         ]
     where
     ppPile x ys = x <.> colon <+> pp (length ys)
-    ppEnemy e = let intent = getField (intention e) s
-                    es     = getField (entity e) s
-                in pp es <+> brackets (text intent)
+    ppEnemy e   = pp (getField (enemy e) s)
 
 ppCard :: State -> Card -> Doc
 ppCard s c = case Map.lookup c (_cardEvents s) of
@@ -403,6 +406,11 @@ ppCard s c = case Map.lookup c (_cardEvents s) of
 instance PP EntityState where
   pp EntityState { .. } =
     text _entityName $$ nest 2 (pp _entityAttrs)
+
+instance PP EnemyState where
+  pp EnemyState { .. } = pp _enemyEnt <+> brackets intent
+    where intent = case _enemyAI of
+                     EnemyTurn x _ -> text x
 
 
 --------------------------------------------------------------------------------

@@ -21,7 +21,6 @@ newtype Attributes = Attrs (Map Attribute Int)
 
 
 data Attribute = Health | Block | Vulnerable
-               | Dead
   deriving (Show,Eq,Ord)
 
 

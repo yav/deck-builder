@@ -1,11 +1,18 @@
 module Game where
 
-import Control.Monad(forM_, replicateM_,when)
+import Control.Monad(forM_, replicateM_,when,unless)
 import RNG
 import Field
 import State
 
 
+--------------------------------------------------------------------------------
+-- View
+
+viewDrawPile :: Action [Card]
+viewDrawPile =
+  do cs <- get theDrawPile
+     randomView (shuffle cs)
 
 
 
@@ -21,6 +28,8 @@ reshuffle =
      set theDrawPile (draw ++ discard)
      shuffleDraw
 
+-- | Shuffle the draw pile.
+-- Usually happens after a reshuffle, but also at the start of a battle.
 shuffleDraw :: Action ()
 shuffleDraw =
   do draw <- get theDrawPile
@@ -28,47 +37,26 @@ shuffleDraw =
 
 -- | Move the top card of the draw deck (if any) to the hand.
 -- Reshuffles the discard pile, if neccessary.
-drawCard :: Action ()
-drawCard =
+drawNextCard :: Action ()
+drawNextCard =
   drawOr (reshuffle *> drawOr (pure ()))
   where
   drawOr k =
     do mb <- removeFrom theDrawPile 0
        case mb of
-          Just c  -> cardDrawn c
+          Just c  -> drawCard c
           Nothing -> k
 
-endOfRound :: Action ()
-endOfRound =
-  do update (entity player ~> entityAttrs) attrEndOfRound
-     es <- getEnemies
-     forM_ es \e -> update (entity e ~> entityAttrs) attrEndOfRound
+-- | Assumes card is not in any pile
+drawCard :: Card -> Action ()
+drawCard c =
+  do doEvent c whenDrawn
+     addTo theHand c
 
-entityStartTurn :: Entity -> Action ()
-entityStartTurn e =
-  update (entity e ~> entityAttrs) (removeAttribute Block)
-
-startPlayerTurn :: Action ()
-startPlayerTurn =
-  do update turn (+1)
-     entityStartTurn player
-     replicateM_ 5 drawCard
-
-enemyTurn :: Action ()
-enemyTurn =
-  do es <- getEnemies
-     forM_ es entityStartTurn
-     EnemyTurn m <- get theAI
-     set theAI =<< m
-
-
-
---------------------------------------------------------------------------------
 exhaustCard :: Card -> Action ()
 exhaustCard c =
   do doEvent c whenExhausted
      addTo theExhausted c
-
 
 retainCard :: Card -> Action ()
 retainCard c =
@@ -81,24 +69,49 @@ discardCard c =
      addTo theDiscarded c
 
 
--- | Assumes card is not in any pile
-cardDrawn :: Card -> Action ()
-cardDrawn c =
-  do doEvent c whenDrawn
-     addTo theHand c
+--------------------------------------------------------------------------------
 
 
-viewDrawPile :: Action [Card]
-viewDrawPile =
-  do cs <- get theDrawPile
-     randomView (shuffle cs)
+
+
+endOfRound :: Action ()
+endOfRound =
+  do update (entity player ~> entityAttrs) attrEndOfRound
+     es <- get enemies
+     forM_ es \e -> update (entity e ~> entityAttrs) attrEndOfRound
+
+entityStartTurn :: Entity -> Action ()
+entityStartTurn e =
+  update (entity e ~> entityAttrs) (removeAttribute Block)
+
+startPlayerTurn :: Action ()
+startPlayerTurn =
+  do update turn (+1)
+     entityStartTurn player
+     replicateM_ 5 drawNextCard
+
+enemyTurn :: Action ()
+enemyTurn =
+  do es <- get enemies
+     forM_ es entityStartTurn
+     forM_ es doEnemyAction
+
+doEnemyAction :: Entity -> Action ()
+doEnemyAction e =
+  do living <- isAlive e
+     when living
+      do EnemyTurn _ act <- get (enemy e ~> enemyAI)
+         next <- act
+         set (enemy e ~> enemyAI) next
+
+
+
 
 --------------------------------------------------------------------------------
 
 
 targetDied :: Entity -> Action ()
-targetDied e =
-  update (entity e ~> entityAttrs) (updateAttribute Dead 1)
+targetDied _ = pure () -- XXX
 
 
 actualAttackAmount :: Entity -> Entity -> Int -> Action Int
@@ -108,6 +121,7 @@ actualAttackAmount src tgt amt =
      if getAttribute Vulnerable tas > 0
         then pure (div (3 * amt) 2)
         else pure amt
+
 
 
 attack :: Entity -> Entity -> Int -> Action Int
@@ -141,6 +155,26 @@ reduceHP tgt n =
      pure amt
 
 
+removeDead :: Action ()
+removeDead =
+  do es <- get enemies
+     forM_ es \e ->
+        do living <- isAlive e
+           unless living (removeEnemy e)
+
+isAlive :: Entity -> Action Bool
+isAlive e =
+  do as <- get (entity e ~> entityAttrs)
+     let health = getAttribute Health as
+     pure (health > 0)
+
+
+--------------------------------------------------------------------------------
+
+gainBlock :: Entity -> Int -> Action ()
+gainBlock e n =
+  update (entity e ~> entityAttrs) (updateAttribute Block n)
+
 
 --------------------------------------------------------------------------------
 playCardFromHand :: Card -> Entity -> Action ()
@@ -150,6 +184,7 @@ playCardFromHand c tgt =
        do removeCardFrom theHand c
           doEvent1 c whenPlay tgt
           doEvent c afterPlay
+          removeDead
 
 endPlayerTurn :: Action ()
 endPlayerTurn =

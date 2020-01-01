@@ -4,49 +4,41 @@ import Field
 import State
 import Game
 
-basicEntity :: Entity -> EntityState
-basicEntity e = EntityState
-                 { _entityId = e
-                 , _entityName = "Dummy"
-                 , _entityAttrs = updateAttribute
-                                   Health 15
-                                   noAttributes
-                 }
-
-boss :: Entity -> EntityState
-boss e = EntityState
-  { _entityName    = "Boss"
-  , _entityAttrs   = updateAttribute Health 15 noAttributes
-  , _entityId = e
+dummy :: Entity -> EnemyState
+dummy e = EnemyState
+  { _enemyEnt = EntityState
+                  { _entityId = e
+                  , _entityName = "Dummy"
+                  , _entityAttrs = updateAttribute Health 15 noAttributes
+                  }
+  , _enemyAI      = dummyAI 3
   }
-
-
-multiAI :: [Action EnemyActions] -> Action EnemyActions
-multiAI xs =
-  do next <- sequence xs
-     let un (EnemyTurn x) = x
-     pure (EnemyTurn (multiAI (map un next)))
+  where
+  dummyAI n = EnemyTurn ("Attack: " ++ show n)
+              do d <- attack e player n
+                 pure (dummyAI (n+d))
 
 
 
-testAI :: Entity -> Action EnemyActions
-testAI self = spawn
+boss :: Entity -> EnemyState
+boss e = EnemyState
+  { _enemyEnt = EntityState
+                  { _entityName    = "Boss"
+                  , _entityAttrs   = updateAttribute Health 15 noAttributes
+                  , _entityId      = e
+                  }
+  , _enemyAI = spawn
+  }
   where
   spawn =
-    do set (intention self) "Spawn Minion"
-       pure $ EnemyTurn $ do m <- newEnemy basicEntity
-                             multiAI [ minion m, damagePlayer m ]
+    EnemyTurn "Spawn Miniion"
+    do m <- newEnemy dummy
+       pure (damagePlayer m)
 
   damagePlayer m =
-    do set (intention self) "Attack 5"
-       pure $ EnemyTurn
-              do _ <- attack self player 5
-                 h <- getAttribute Health <$> get (entity m ~> entityAttrs)
-                 if h > 0 then damagePlayer m else spawn
+    EnemyTurn "Attack 5"
+    do _ <- attack e player 5
+       h <- getAttribute Health <$> get (entity m ~> entityAttrs)
+       pure (if h > 0 then damagePlayer m else spawn)
 
-  minion m =
-    do set (intention m) "Gain block 3"
-       pure $ EnemyTurn $
-              do update (entity m ~> entityAttrs) (updateAttribute Block 3)
-                 minion m
 

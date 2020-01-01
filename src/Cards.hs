@@ -80,7 +80,7 @@ seek = custom . exhaustsOnPlay . card
              cs <- choose "Choose a card to add to the hand" (Exactly 1) d
              case cs of
                c : _ -> do removeCardFrom theDrawPile c
-                           cardDrawn c
+                           drawCard c
                _ -> pure ()
        }
 

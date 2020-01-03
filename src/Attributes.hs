@@ -20,7 +20,7 @@ import PP
 newtype Attributes = Attrs (Map Attribute Int)
 
 
-data Attribute = Health | Block | Vulnerable
+data Attribute = Health | Block | Vulnerable | Strength
   deriving (Show,Eq,Ord)
 
 

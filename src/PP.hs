@@ -24,6 +24,7 @@ numbered ds = vcat (zipWith sh [ 1 :: Int .. ] ds)
   sh i d = let j = show i
            in text (replicate (maxW - length j) ' ' ++ j) <.> "." <+> d
 
-
+commaSep :: [Doc] -> Doc
+commaSep = hcat . punctuate comma
 
 

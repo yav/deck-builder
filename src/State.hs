@@ -41,6 +41,7 @@ module State
   , removeEnemy
   , EnemyState(..)
   , EnemyActions(..)
+  , EnemyIntent(..)
   , enemyAI
 
   -- * Attributes
@@ -262,7 +263,9 @@ turn = Field { getField = _turn
 
 
 
-data EnemyActions = EnemyTurn String (Action EnemyActions)
+data EnemyActions = EnemyTurn [(EnemyIntent,Int)] (Action EnemyActions)
+data EnemyIntent  = WillAttack | WillDefend | WillBuff | WillDebuf
+                      deriving Eq
 
 data EnemyState = EnemyState
   { _enemyEnt      :: EntityState
@@ -409,8 +412,21 @@ instance PP EntityState where
 
 instance PP EnemyState where
   pp EnemyState { .. } = pp _enemyEnt <+> brackets intent
-    where intent = case _enemyAI of
-                     EnemyTurn x _ -> text x
+    where
+    intent = case _enemyAI of
+               EnemyTurn is _ -> if null is then "???"
+                                            else commaSep (map sayIntent is)
+
+    sayIntent (i,n) = pp i <.> text (replicate n '+')
+
+
+
+instance PP EnemyIntent where
+  pp i = case i of
+           WillAttack -> "Attack"
+           WillDefend -> "Defend"
+           WillBuff   -> "Buff"
+           WillDebuf  -> "Debuff"
 
 
 --------------------------------------------------------------------------------

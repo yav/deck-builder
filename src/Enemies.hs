@@ -14,7 +14,7 @@ dummy e = EnemyState
   , _enemyAI      = dummyAI 3
   }
   where
-  dummyAI n = EnemyTurn ("Attack: " ++ show n)
+  dummyAI n = EnemyTurn [(WillAttack,0)]
               do d <- attack e player n
                  pure (dummyAI (n+d))
 
@@ -31,12 +31,12 @@ boss e = EnemyState
   }
   where
   spawn =
-    EnemyTurn "Spawn Miniion"
+    EnemyTurn []
     do m <- newEnemy dummy
        pure (damagePlayer m)
 
   damagePlayer m =
-    EnemyTurn "Attack 5"
+    EnemyTurn [(WillAttack,0)]
     do _ <- attack e player 5
        h <- getAttribute Health <$> get (entity m ~> entityAttrs)
        pure (if h > 0 then damagePlayer m else spawn)

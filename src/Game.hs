@@ -116,11 +116,13 @@ targetDied _ = pure () -- XXX
 
 actualAttackAmount :: Entity -> Entity -> Int -> Action Int
 actualAttackAmount src tgt amt =
-  do _sas <- get (entity src ~> entityAttrs)
+  do sas <- get (entity src ~> entityAttrs)
+     let amt1 = amt + getAttribute Strength sas
      tas  <- get (entity tgt ~> entityAttrs)
-     if getAttribute Vulnerable tas > 0
-        then pure (div (3 * amt) 2)
-        else pure amt
+     let amt2 = if getAttribute Vulnerable tas > 0
+                   then div (3 * amt1) 2
+                   else amt1
+     pure amt2
 
 
 
@@ -174,6 +176,14 @@ isAlive e =
 gainBlock :: Entity -> Int -> Action ()
 gainBlock e n =
   update (entity e ~> entityAttrs) (updateAttribute Block n)
+
+gainDebuff :: Entity -> Int -> Attribute -> Action ()
+gainDebuff e n a =
+  update (entity e ~> entityAttrs) (updateAttribute a n)
+
+gainBuff :: Entity -> Int -> Attribute -> Action ()
+gainBuff e n a =
+  update (entity e ~> entityAttrs) (updateAttribute a n)
 
 
 --------------------------------------------------------------------------------

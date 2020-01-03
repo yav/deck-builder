@@ -26,7 +26,8 @@ newGame =
   do let addCard x = addTo theDrawPile =<< newCard x
      replicateM_ 5 (addCard strike)
      replicateM_ 5 (addCard defend)
-     addCard seek
+     addCard bash
+     addCard spotWeakness
      shuffleDraw
 
      update (entity player ~> entityAttrs) (updateAttribute Health 60)

@@ -12,9 +12,14 @@ import Game
 import Cards
 import Enemies
 
+-- import qualified Server
+
 
 main :: IO ()
-main =
+main = mainTerminal
+
+mainTerminal :: IO ()
+mainTerminal =
   do hSetBuffering stdout NoBuffering
      rng <- newRNG
      s0  <- runAction_ newGame (newState rng)
@@ -28,6 +33,7 @@ newGame =
      replicateM_ 5 (addCard defend)
      addCard bash
      addCard spotWeakness
+     addCard reaper
      shuffleDraw
 
      update (entity player ~> entityAttrs) (updateAttribute Health 60)

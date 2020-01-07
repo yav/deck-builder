@@ -1,0 +1,17 @@
+<html>
+<head>
+</head>
+<body>
+<script>
+const socket = new WebSocket('ws://localhost:8000')
+
+socket.addEventListener('open', function(ev) {
+  socket.send( JSON.stringify( {hello: "World"}) )
+})
+
+socket.addEventListener('message', function(ev) {
+  console.log('We recevied: ' + ev.data)
+})
+</script>
+</body>
+</html>

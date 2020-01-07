@@ -37,6 +37,9 @@ targeted = \ev -> ev { isPlayable = \tgt -> if tgt == player
                                               else isAlive tgt
                      }
 
+targetAll :: CardProp
+targetAll = \ev -> ev { whenPlay = \_ -> mapM_ (whenPlay ev) =<< get enemies }
+
 repeated :: Int -> CardProp
 repeated n = \ev -> ev { whenPlay = replicateM_ n . whenPlay ev }
 
@@ -105,3 +108,9 @@ seek = named "Seek" . exhausting . withAction seekAct . card
                      drawCard c
          [] -> pure ()
 
+reaper :: CardSpec
+reaper = named "Reaper" . exhausting . withAction act . card
+  where
+  act _ = do es <- get enemies
+             total <- sum <$> mapM (\e -> attack player e 4) es
+             heal player total

@@ -13,6 +13,7 @@ cabal-version:       >=1.10
 executable deck
   other-modules:       State, Game,
                        Cards, Attributes, Enemies,
+                       Server
                        PP, RNG, Field
 
   build-depends:       base                 >=4.8,
@@ -22,7 +23,12 @@ executable deck
                        tf-random,
                        array                >=0.5,
                        containers           >=0.5,
-                       pretty
+                       pretty,
+
+                       websockets,
+                       websockets-snap,
+                       snap-server,
+                       aeson
 
   main-is:             Main.hs
   hs-source-dirs:      src

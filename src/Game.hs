@@ -185,6 +185,12 @@ gainBuff :: Entity -> Int -> Attribute -> Action ()
 gainBuff e n a =
   update (entity e ~> entityAttrs) (updateAttribute a n)
 
+heal :: Entity -> Int -> Action ()
+heal e n =
+  do yes <- isAlive e
+     when yes (update (entity e ~> entityAttrs) (updateAttribute Health n))
+
+
 
 --------------------------------------------------------------------------------
 playCardFromHand :: Card -> Entity -> Action ()

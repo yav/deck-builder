@@ -1,92 +1,97 @@
 module Attributes
-  ( Attributes
-  , Attribute(..)
+  ( Attrs
+  , EntAttr(..)
+  , CardAttr(..)
   , noAttributes
   , hasAttribute
-  , getAttribute
-  , updateAttribute
-  , reduceNonNeg
   , removeAttribute
   , attrEndOfRound
+  , attribute
   ) where
 
-import Data.Maybe(fromMaybe)
 import Data.Map(Map)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
+import Field
 import PP
 
-newtype Attributes = Attrs (Map Attribute Int)
+newtype Attrs k = Attrs (Map k Int)
+
+class Ord a => Attr a where
+  removeAtZero :: a -> Bool
+  singleTurn   :: a -> Bool
 
 
-data Attribute = MaxHealth | Health | Block | Vulnerable | Strength
+--------------------------------------------------------------------------------
+data EntAttr = MaxHealth | Health | Block | Vulnerable | Strength
+             | MaxEnergy | Energy
   deriving (Show,Eq,Ord)
 
 
-removeAtZero :: Attribute -> Bool
-removeAtZero = \a -> a `Set.member` as
-  where
-  as = Set.fromList
-            [ Block, Vulnerable ]
+fromSet :: Ord a => [a] -> a -> Bool
+fromSet xs = (`Set.member` Set.fromList xs)
 
-singleTurn :: Attribute -> Bool
-singleTurn = \a -> a `Set.member` as
-  where
-  as = Set.fromList
-        [ Vulnerable ]
+instance Attr EntAttr where
+  removeAtZero = fromSet [ Block, Vulnerable ]
+  singleTurn   = fromSet [ Vulnerable ]
+
+
+--------------------------------------------------------------------------------
+data CardAttr = TurnCost
+  deriving (Show,Eq,Ord)
+
+instance Attr CardAttr where
+  removeAtZero = fromSet []
+  singleTurn   = fromSet [TurnCost]
 
 
 
 --------------------------------------------------------------------------------
 
 -- | No attributes.
-noAttributes :: Attributes
+noAttributes :: Attrs a
 noAttributes = Attrs Map.empty
 
 -- | Check if we have an attribute.
-hasAttribute :: Attribute -> Attributes -> Bool
+hasAttribute :: Attr a => a -> Attrs a -> Bool
 hasAttribute a (Attrs mp) = Map.member a mp
 
--- | Get the value of an attribute.  Defaults to 0 if missing.
-getAttribute :: Attribute -> Attributes -> Int
-getAttribute a (Attrs mp) = Map.findWithDefault 0 a mp
-
--- | Change the value of an attribute by this mucth,
-updateAttribute :: Attribute -> Int -> Attributes -> Attributes
-updateAttribute a n (Attrs mp) = Attrs (Map.alter upd a mp)
-  where upd mb = updAttr a (fromMaybe 0 mb) n
-
-reduceNonNeg :: Attribute -> Int -> Attributes -> (Int,Attributes)
-reduceNonNeg a i as =
-  let as1  = updateAttribute a (negate i) as
-      newV = getAttribute a as1
-  in if newV < 0
-        then (i+newV, updateAttribute a (negate newV) as1)
-        else (i,as1)
-
 -- | Remove the given attribute.
-removeAttribute :: Attribute -> Attributes -> Attributes
+removeAttribute :: Attr a => a -> Attrs a -> Attrs a
 removeAttribute a (Attrs mp) = Attrs (Map.delete a mp)
 
--- | Decrement single turn attributes
-attrEndOfRound :: Attributes -> Attributes
-attrEndOfRound (Attrs mp) = Attrs (Map.mapMaybeWithKey upd mp)
-  where upd a v = if singleTurn a then updAttr a v (-1) else Just v
 
-updAttr :: Attribute -> Int -> Int -> Maybe Int
-updAttr a x d =
-  let newVal = x + d
-  in if newVal == 0 && removeAtZero a
-       then Nothing
-       else Just newVal
+
+-- | Missing attriubtes are reported as 0.
+-- Use `hasAttribute` if the presence matters.
+attribute :: Attr a => a -> FieldOf (Attrs a) Int
+attribute e = Field { getField = doGet
+                    , setField = \x s ->
+                                    case setAttr e x of
+                                      Nothing -> removeAttribute e s
+                                      Just v  -> doSet v s
+                    }
+  where
+  doGet (Attrs mp) = Map.findWithDefault 0 e mp
+  doSet v (Attrs mp) = Attrs (Map.insert e v mp)
+
+-- | Decrement single turn attributes
+attrEndOfRound :: Attr a => Attrs a -> Attrs a
+attrEndOfRound (Attrs mp) = Attrs (Map.mapMaybeWithKey upd mp)
+  where upd a v = if singleTurn a then setAttr a (v-1) else Just v
+
+setAttr :: Attr a => a -> Int -> Maybe Int
+setAttr a newVal = if newVal == 0 && removeAtZero a
+                      then Nothing
+                      else Just newVal
 
 --------------------------------------------------------------------------------
 
-instance PP Attribute where
+instance PP EntAttr where
   pp = text . show
 
-instance PP Attributes where
+instance PP a => PP (Attrs a) where
   pp (Attrs xs) = vcat (map ppV (Map.toList xs))
     where ppV (a,v) = pp a <.> colon <+> pp v
 

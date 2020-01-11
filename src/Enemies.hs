@@ -9,7 +9,7 @@ dummy e = EnemyState
   { _enemyEnt = EntityState
                   { _entityId = e
                   , _entityName = "Dummy"
-                  , _entityAttrs = updateAttribute Health 15 noAttributes
+                  , _entityAttrs = setField (attribute Health) 15 noAttributes
                   }
   , _enemyAI      = dummyAI 3
   }
@@ -24,7 +24,7 @@ boss :: Entity -> EnemyState
 boss e = EnemyState
   { _enemyEnt = EntityState
                   { _entityName    = "Boss"
-                  , _entityAttrs   = updateAttribute Health 15 noAttributes
+                  , _entityAttrs   = setField (attribute Health) 15 noAttributes
                   , _entityId      = e
                   }
   , _enemyAI = spawn
@@ -38,7 +38,7 @@ boss e = EnemyState
   damagePlayer m =
     EnemyTurn [(WillAttack,0)]
     do _ <- attack e player 5
-       h <- getAttribute Health <$> get (entity m ~> entityAttrs)
-       pure (if h > 0 then damagePlayer m else spawn)
+       haveMinion <- isAlive m
+       pure (if haveMinion then damagePlayer m else spawn)
 
 

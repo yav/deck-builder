@@ -5,6 +5,8 @@ import RNG
 import Field
 import State
 
+import Debug.Trace
+
 
 --------------------------------------------------------------------------------
 -- View
@@ -82,12 +84,14 @@ endOfRound =
 
 entityStartTurn :: Entity -> Action ()
 entityStartTurn e =
-  update (entity e ~> entityAttrs) (removeAttribute Block)
+  set (entity e ~> entityAttrs ~> attribute Block) 0
 
 startPlayerTurn :: Action ()
 startPlayerTurn =
   do update turn (+1)
      entityStartTurn player
+     let my x = entity player ~> entityAttrs ~> attribute x
+     set (my Energy) =<< get (my MaxEnergy)
      replicateM_ 5 drawNextCard
 
 enemyTurn :: Action ()
@@ -116,31 +120,22 @@ targetDied _ = pure () -- XXX
 
 actualAttackAmount :: Entity -> Entity -> Int -> Action Int
 actualAttackAmount src tgt amt =
-  do sas <- get (entity src ~> entityAttrs)
-     let amt1 = amt + getAttribute Strength sas
-     tas  <- get (entity tgt ~> entityAttrs)
-     let amt2 = if getAttribute Vulnerable tas > 0
-                   then div (3 * amt1) 2
-                   else amt1
-     pure amt2
+  do str <- get (entity src ~> entityAttrs ~> attribute Strength)
+     vul <- get (entity tgt ~> entityAttrs ~> attribute Vulnerable)
+     let mul = if vul > 0 then 1.5 :: Rational else 1
+     pure (floor (mul * fromIntegral (amt + str)))
 
 
 
 attack :: Entity -> Entity -> Int -> Action Int
 attack src tgt amt =
-  do let who = entity tgt ~> entityAttrs
-     as <- get who
-     if getAttribute Health as == 0
-        then pure 0
-        else doDamage tgt =<< actualAttackAmount src tgt amt
+  do yes <- isAlive tgt
+     if yes then doDamage tgt =<< actualAttackAmount src tgt amt
+            else pure 0
 
 doDamage :: Entity -> Int -> Action Int
 doDamage tgt amt =
-  do let who = entity tgt ~> entityAttrs
-     as <- get who
-     let (blocked,as1) = reduceNonNeg Block amt as
-     set who as1
-
+  do blocked <- reduceNonNeg (entity tgt ~> entityAttrs ~> attribute Block) amt
      let unblocked = amt - blocked
      if unblocked > 0
         then reduceHP tgt unblocked
@@ -149,11 +144,8 @@ doDamage tgt amt =
 
 reduceHP :: Entity -> Int -> Action Int
 reduceHP tgt n =
-  do let who = entity tgt ~> entityAttrs
-     as <- get who
-     let (amt,as1) = reduceNonNeg Health n as
-     set who as1
-     when (getAttribute Health as1 == 0) (targetDied tgt)
+  do amt <- reduceNonNeg (entity tgt ~> entityAttrs ~> attribute Health) n
+     when (amt <= n) (targetDied tgt)
      pure amt
 
 
@@ -165,30 +157,27 @@ removeDead =
            unless living (removeEnemy e)
 
 isAlive :: Entity -> Action Bool
-isAlive e =
-  do as <- get (entity e ~> entityAttrs)
-     let health = getAttribute Health as
-     pure (health > 0)
+isAlive e = (> 0) <$> get (entity e ~> entityAttrs ~> attribute Health)
 
 
 --------------------------------------------------------------------------------
 
 gainBlock :: Entity -> Int -> Action ()
 gainBlock e n =
-  update (entity e ~> entityAttrs) (updateAttribute Block n)
+  update (entity e ~> entityAttrs ~> attribute Block) (+n)
 
-gainDebuff :: Entity -> Int -> Attribute -> Action ()
+gainDebuff :: Entity -> Int -> EntAttr -> Action ()
 gainDebuff e n a =
-  update (entity e ~> entityAttrs) (updateAttribute a n)
+  update (entity e ~> entityAttrs ~> attribute a) (+n)
 
-gainBuff :: Entity -> Int -> Attribute -> Action ()
+gainBuff :: Entity -> Int -> EntAttr -> Action ()
 gainBuff e n a =
-  update (entity e ~> entityAttrs) (updateAttribute a n)
+  update (entity e ~> entityAttrs ~> attribute a) (+n)
 
 heal :: Entity -> Int -> Action ()
 heal e n =
   do yes <- isAlive e
-     when yes (update (entity e ~> entityAttrs) (updateAttribute Health n))
+     when yes (update (entity e ~> entityAttrs ~> attribute Health) (+n))
 
 
 
@@ -196,11 +185,30 @@ heal e n =
 playCardFromHand :: Card -> Entity -> Action ()
 playCardFromHand c tgt =
   do yes <- doEvent1 c isPlayable tgt
-     when yes
-       do removeCardFrom theHand c
-          doEvent1 c whenPlay tgt
-          doEvent c afterPlay
-          removeDead
+     unless yes abort
+
+     cost <- cardCost c
+
+     () <- traceM ("****************" ++ show cost)
+     case cost of
+       CostAll -> pure () -- X cards modify energy (so they can see)
+       Cost n  ->
+         do let energy = entity player ~> entityAttrs ~> attribute Energy
+            paid <- reduceNonNeg energy n
+            when (paid < n) abort
+
+     removeCardFrom theHand c
+     doEvent1 c whenPlay tgt
+     doEvent c afterPlay
+     removeDead
+
+cardCost :: Card -> Action CardCost
+cardCost c =
+  do cs <- get (cardAttrs c)
+     if hasAttribute TurnCost cs
+        then pure (Cost (getField (attribute TurnCost) cs))
+        else normalCost c
+
 
 endPlayerTurn :: Action ()
 endPlayerTurn =

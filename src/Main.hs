@@ -22,7 +22,7 @@ mainTerminal :: IO ()
 mainTerminal =
   do hSetBuffering stdout NoBuffering
      rng <- newRNG
-     s0  <- runAction_ newGame (newState rng)
+     s0  <- runAction newGame (newState rng)
      play s0
 
 
@@ -36,7 +36,12 @@ newGame =
      addCard reaper
      shuffleDraw
 
-     update (entity player ~> entityAttrs) (updateAttribute Health 60)
+     let attr x y = set (entity player ~> entityAttrs ~> attribute x) y
+
+     attr MaxHealth 60
+     attr Health    60
+     attr MaxEnergy  3
+
      _ <- newEnemy boss
 
      startPlayerTurn
@@ -48,12 +53,12 @@ play s =
      putStr "> "
      cmd <- getLine
      case words cmd of
-       ["e"] -> play =<< runAction_ endPlayerTurn s
+       ["e"] -> play =<< runAction endPlayerTurn s
        w : more | Just c <- parseChoice (getField theHand s) w ->
          case more of
-           [] -> play =<< runAction_ (playCardFromHand c player) s
+           [] -> play =<< runAction (playCardFromHand c player) s
            [we] | Just e <- parseChoice (getField enemies s) we ->
-                 play =<< runAction_ (playCardFromHand c e) s
+                 play =<< runAction (playCardFromHand c e) s
            _ -> again
        _ -> again
 
@@ -62,19 +67,17 @@ play s =
              play s
 
 
-runAction_ :: Action () -> State -> IO State
-runAction_ act s = snd <$> runScript (doAction act s)
+runAction :: Action () -> State -> IO State
+runAction act s = runScript s (doAction act s)
 
-runAction :: Action a -> State -> IO (a,State)
-runAction act s = runScript (doAction act s)
-
-runScript :: Script a -> IO (a,State)
-runScript scr =
+runScript :: State -> Script -> IO State
+runScript s0 scr =
   case scr of
-    Done a s1 -> pure (a,s1)
+    Abort -> pure s0
+    Done s1 -> pure s1
     Choose s msg cnt cs k ->
       do ds <- getInp s msg cnt cs
-         runScript (k ds)
+         runScript s0 (k ds)
 
 parseChoice :: [a] -> String -> Maybe a
 parseChoice cs txt =

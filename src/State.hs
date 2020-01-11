@@ -6,6 +6,9 @@ module State
   , State, newState
   , Script(..)
 
+  -- * Control
+  , abort
+
   -- * Fields
   , Field, get, set, update
 
@@ -25,8 +28,11 @@ module State
   -- * Interaction
   , choose, Count(..)
 
-  -- * Events
+  -- * Cards
   , CardEvents(..)
+  , CardCost(..)
+  , cardAttrs
+  , normalCost
   , doEvent, doEvent1
   , newCard
 
@@ -45,7 +51,8 @@ module State
   , enemyAI
 
   -- * Attributes
-  , Attribute(..)
+  , EntAttr(..)
+  , reduceNonNeg
   , module A
 
   -- * PP
@@ -85,6 +92,7 @@ data State = State
                         -- game state
 
   , _cardEvents  :: Map Card CardEvents
+  , _cardAttrs   :: Map Card (Attrs CardAttr)
 
   , _player      :: EntityState
 
@@ -99,11 +107,10 @@ data State = State
 
 
 data EntityState = EntityState
-  { _entityAttrs   :: Attributes
+  { _entityAttrs   :: Attrs EntAttr
   , _entityName    :: String
   , _entityId      :: Entity
   }
-
 
 
 data CardEvents = CardEvents
@@ -117,9 +124,11 @@ data CardEvents = CardEvents
   , isPlayable      :: Entity -> Action Bool
   , self            :: Card
   , cardName        :: String
+  , cardNormalCost  :: CardCost
   }
 
-
+data CardCost = Cost Int | CostAll
+  deriving Show
 
 
 newState :: RNG -> State
@@ -135,6 +144,7 @@ newState r =
           , _rng          = newR
           , _viewRNG      = viewRNG
           , _cardEvents   = Map.empty
+          , _cardAttrs    = Map.empty
           , _nextCard     = Card 0
           , _nextEntity   = Entity 1
           , _player       = EntityState
@@ -149,7 +159,7 @@ newState r =
 
 --------------------------------------------------------------------------------
 newtype Action a = Action (forall r. (a -> Result r) -> Result r)
-type Result r    = State -> Script r
+type Result r    = State -> Script
 
 
 
@@ -168,9 +178,18 @@ set f a = Action \k -> k () . setField f a
 update :: Field a -> (a -> a) -> Action ()
 update x f = set x . f =<< get x
 
-doAction :: Action a -> State -> Script a
-doAction (Action m) = m Done
+abort :: Action a
+abort = Action \_ -> \_ -> Abort
 
+doAction :: Action () -> State -> Script
+doAction (Action m) = m (\_ -> Done)
+
+reduceNonNeg :: Field Int -> Int -> Action Int
+reduceNonNeg f x =
+  do v <- get f
+     let actual = min v x
+     set f (v - actual)
+     pure actual
 
 
 instance Functor Action where
@@ -187,8 +206,9 @@ instance Monad Action where
 --------------------------------------------------------------------------------
 -- Script
 
-data Script a = Choose State String Count [Card] ([Card] -> Script a)
-              | Done a State
+data Script = Choose State String Count [Card] ([Card] -> Script)
+            | Done State
+            | Abort
 
 data Count  = UpTo Int | Exactly Int
 --------------------------------------------------------------------------------
@@ -251,10 +271,20 @@ enemiesF = Field { getField = _enemyState
                  , setField = \x s -> s { _enemyState = x }
                  }
 
-entityAttrs :: FieldOf EntityState Attributes
+entityAttrs :: FieldOf EntityState (Attrs EntAttr)
 entityAttrs = Field { getField = _entityAttrs
                     , setField = \x s -> s { _entityAttrs = x }
                     }
+
+cardAttrs :: Card -> Field (Attrs CardAttr)
+cardAttrs c = Field
+  { getField = Map.findWithDefault noAttributes c . _cardAttrs
+  , setField = \x s -> s { _cardAttrs = Map.insert c x (_cardAttrs s) }
+  }
+
+normalCost :: Card -> Action CardCost
+normalCost c = cardNormalCost . (Map.! c) <$> get events
+
 
 turn :: Field Int
 turn = Field { getField = _turn
